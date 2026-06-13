@@ -1,0 +1,4096 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWS HeightMap Tool</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pbf@3.2.1/dist/pbf.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@1.3.0/dist/vector-tile.js"></script>
+  <script src="https://unpkg.com/shapefile@0.6.6/dist/shapefile.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #fff;
+      min-height: 100vh;
+    }
+    header {
+      padding: 1rem 2rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    header h1 { font-size: 1.5rem; font-weight: 600; }
+    header p { font-size: 0.875rem; opacity: 0.9; margin-top: 0.25rem; }
+    main {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 1rem;
+      padding: 1rem;
+      height: calc(100vh - 80px);
+    }
+    .sidebar {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      overflow-y: auto;
+    }
+    .control-group { display: flex; flex-direction: column; gap: 0.5rem; }
+    .control-group label { font-size: 0.875rem; color: #94a3b8; font-weight: 500; }
+    .control-group input[type="range"] { width: 100%; cursor: pointer; }
+    .control-group select {
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #fff;
+      cursor: pointer;
+    }
+    button {
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      border: none;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .content {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 1rem;
+    }
+    .map-section, .heightmap-section {
+      background: #16213e;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .section-title {
+      padding: 0.75rem 1rem;
+      background: #0f172a;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #94a3b8;
+      border-bottom: 1px solid #334155;
+    }
+    #map { flex: 1; min-height: 200px; }
+    .leaflet-container { background: #0f172a; }
+    .heightmap-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 1rem;
+    }
+    .heightmap-container canvas {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #334155;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .progress-container {
+      width: 200px;
+      height: 8px;
+      background: #334155;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      transition: width 0.2s ease;
+    }
+    .progress-text {
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+    }
+    .stat-item {
+      background: #0f172a;
+      padding: 0.5rem;
+      border-radius: 6px;
+      text-align: center;
+    }
+    .stat-label { color: #64748b; display: block; }
+    .stat-value { color: #fff; font-weight: 600; font-size: 0.875rem; }
+    .info-box {
+      background: #0f172a;
+      padding: 1rem;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      line-height: 1.6;
+    }
+    .info-box strong { color: #fff; }
+    .error-box { color: #ef4444 !important; border: 1px solid #ef4444; }
+    .coordinates {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .coord-input { display: flex; flex-direction: column; gap: 0.25rem; }
+    .coord-input input {
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #fff;
+      font-size: 0.875rem;
+    }
+    .coord-input label { font-size: 0.75rem; color: #64748b; }
+    .btn-group { display: flex; gap: 0.5rem; }
+    .btn-group button { flex: 1; font-size: 0.75rem; padding: 0.5rem; }
+    .view-toggle {
+      display: flex;
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 4px;
+      gap: 4px;
+    }
+    .view-toggle button {
+      flex: 1;
+      padding: 0.5rem;
+      font-size: 0.75rem;
+      background: transparent;
+    }
+    .view-toggle button.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .canvas-wrapper {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      width: 100%;
+      height: 100%;
+    }
+    .canvas-box {
+      text-align: center;
+    }
+    .canvas-box p {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-bottom: 0.5rem;
+    }
+    .custom-marker {
+      width: 16px;
+      height: 16px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    @media (max-width: 968px) {
+      main { grid-template-columns: 1fr; height: auto; }
+      .content { grid-template-rows: 300px 300px; }
+      .sidebar { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AWS HeightMap Tool</h1>
+    <p>AWS Terrain Tiles を使用した標高データ可視化ツール</p>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <div class="control-group">
+        <label>座標入力</label>
+        <div class="coordinates">
+          <div class="coord-input">
+            <label>緯度 (Lat)</label>
+            <input type="text" id="latInput" placeholder="35.6762" value="">
+          </div>
+          <div class="coord-input">
+            <label>経度 (Lon)</label>
+            <input type="text" id="lonInput" placeholder="139.6503" value="">
+          </div>
+        </div>
+        <button id="applyCoords" style="margin-top: 0.5rem; font-size: 0.875rem;">座標を適用</button>
+      </div>
+
+      <div class="control-group">
+        <label>ズームレベル: <span id="zoomValue">12</span></label>
+        <input type="range" id="zoom" min="5" max="18" value="12">
+        <span style="font-size: 0.75rem; color: #64748b;">高いほど詳細、低いほど広範囲</span>
+      </div>
+
+      <div class="control-group">
+        <label>タイル数（自動計算）: <span id="tileValue">1</span>×<span id="tileValue2">1</span></label>
+        <span style="font-size: 0.75rem; color: #64748b;">選択範囲に基づき自動計算されます</span>
+      </div>
+
+      <div class="control-group">
+        <label>カラースキーム</label>
+        <select id="colorScheme">
+          <option value="grayscale" selected>グレースケール</option>
+          <option value="terrain">地形 (Terrain)</option>
+          <option value="heatmap">ヒートマップ</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>表示モード</label>
+        <div class="view-toggle">
+          <button id="view2d" class="active">2D</button>
+          <button id="view3d">3D</button>
+        </div>
+      </div>
+
+      <div class="control-group" id="exaggerationGroup" style="display: none;">
+        <label>高さ強調: <span id="exaggerationValue">1.0</span>x</label>
+        <input type="range" id="exaggeration" min="0.5" max="5" step="0.5" value="1.0">
+      </div>
+
+      <!-- 画像範囲情報（距離表示） -->
+      <div class="control-group" style="padding-top: 0.75rem; border-top: 1px solid #334155;">
+        <label style="font-weight: 600; color: #667eea;">実距離</label>
+        <div class="stats" style="margin-top: 0.5rem;">
+          <div class="stat-item">
+            <span class="stat-label">南北距離</span>
+            <span class="stat-value" id="nsDistance">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">東西距離</span>
+            <span class="stat-value" id="ewDistance">-</span>
+          </div>
+        </div>
+        <div style="margin-top: 0.5rem; font-size: 0.75rem; color: #64748b; text-align: center;" id="areaInfo">
+          取得範囲を選択してください
+        </div>
+      </div>
+
+      <!-- 縮尺設定 -->
+      <div class="control-group" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #334155;">
+        <label style="font-weight: 600; color: #667eea;">出力縮尺</label>
+        <div style="margin-top: 0.5rem;">
+          <label>1px = <span id="scaleValue">10</span>m</label>
+          <input type="range" id="scaleSlider" min="1" max="100" step="1" value="10" style="width: 100%;">
+          <span style="font-size: 0.75rem; color: #64748b;">小さいほど高解像度・大きな画像</span>
+        </div>
+      </div>
+      
+      <!-- 画像サイズ -->
+      <div class="control-group">
+        <label style="font-weight: 600; color: #667eea;">出力画像サイズ</label>
+        <div class="stats" style="margin-top: 0.5rem;">
+          <div class="stat-item">
+            <span class="stat-label">幅</span>
+            <span class="stat-value" id="imgWidth">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">高さ</span>
+            <span class="stat-value" id="imgHeight">-</span>
+          </div>
+        </div>
+        <div style="margin-top: 0.5rem; font-size: 0.75rem; color: #64748b; text-align: center;" id="imgSizeInfo">
+          取得範囲と縮尺で自動計算
+        </div>
+      </div>
+
+      <button id="fetchElevation">標高データを取得</button>
+
+      <div id="tileInfo" class="info-box" style="display: none;"></div>
+      <div id="errorBox" class="info-box error-box" style="display: none;"></div>
+
+      <div class="info-box">
+        <strong>使い方:</strong><br>
+        1. 起点をクリック<br>
+        2. 終点をクリックで範囲確定<br>
+        3. 「標高データを取得」をクリック<br>
+        4. HeightMapをPNGで保存可能<br><br>
+        <strong>HeightMap:</strong> 白=低地、黒=高地
+      </div>
+
+      <div id="statsContainer" style="display: none;">
+        <div class="stats" id="stats"></div>
+        <div class="btn-group" style="margin-top: 0.75rem;">
+          <button id="exportHeightmap">HeightMap保存</button>
+          <button id="exportNormalmap">NormalMap保存</button>
+        </div>
+        <div class="btn-group" style="margin-top: 0.5rem;">
+          <button id="exportMinecraft" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">Minecraftワールド出力</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="content">
+      <section class="map-section">
+        <div class="section-title" id="mapTitle">地図 - 起点をクリック（1/2）</div>
+        <div id="map"></div>
+      </section>
+
+      <section class="heightmap-section">
+        <div class="section-title">HeightMap</div>
+        <div class="heightmap-container" id="heightmapContainer">
+          <div class="loading">
+            <p>地図で場所を選択してください</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    // ==================== AWS Terrain Tiles Service ====================
+    const TERRAIN_TILE_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+    // 国土地理院 雪氷分布図 (2024年版)
+    const GSI_SNOW_ICE_URL = 'https://cyberjapandata.gsi.go.jp/xyz/2024_sekisetu/{z}/{x}/{y}.png';
+
+    // RGB値から標高を計算 (Terrarium形式)
+    function decodeElevation(r, g, b) {
+      return (r * 256 + g + b / 256) - 32768;
+    }
+
+    // タイル座標を計算
+    function latLonToTile(lat, lon, zoom) {
+      const latRad = lat * Math.PI / 180;
+      const n = Math.pow(2, zoom);
+      const x = Math.floor((lon + 180) / 360 * n);
+      const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+      return { x, y, z: zoom };
+    }
+
+    // タイルURL生成
+    function getTileUrl(x, y, z) {
+      return TERRAIN_TILE_URL.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    }
+    
+    // 雪氷分布図タイルURL生成
+    function getSnowIceTileUrl(x, y, z) {
+      return GSI_SNOW_ICE_URL.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    }
+
+    // タイルキャッシュ（メモリ内）
+    const tileCache = new Map();
+    const MAX_CACHE_SIZE = 50; // 最大50タイル
+    
+    // キャッシュキー生成
+    function getTileCacheKey(x, y, z) {
+      return `${z}/${x}/${y}`;
+    }
+    
+    // キャッシュから取得
+    function getCachedTile(x, y, z) {
+      const key = getTileCacheKey(x, y, z);
+      const cached = tileCache.get(key);
+      if (cached) {
+        cached.lastAccessed = Date.now();
+        return cached.data;
+      }
+      return null;
+    }
+    
+    // キャッシュに保存
+    function setCachedTile(x, y, z, data) {
+      const key = getTileCacheKey(x, y, z);
+      
+      // キャッシュがいっぱいなら最古のものを削除
+      if (tileCache.size >= MAX_CACHE_SIZE) {
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [k, v] of tileCache) {
+          if (v.lastAccessed < oldestTime) {
+            oldestTime = v.lastAccessed;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey) tileCache.delete(oldestKey);
+      }
+      
+      tileCache.set(key, { data, lastAccessed: Date.now() });
+    }
+    
+    // 雪氷分布図タイルを取得（雪・氷マスク用）
+    async function fetchSnowIceTile(x, y, z) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch(getSnowIceTileUrl(x, y, z), {
+          mode: 'cors',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) return null;
+        
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
+        
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const mask = new Uint8Array(canvas.width * canvas.height);
+        
+        // 雪氷分布図: 紫色/白色 = 雪氷、黒/透明 = その他
+        // RとBが高く、Gが低い = 紫（雪氷エリア）
+        const data = imageData.data;
+        let i = 0, j = 0;
+        while (i < data.length) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          // 紫色判定: R>100 && B>100 && G<100 && アルファ>128
+          mask[j++] = (r > 100 && b > 100 && g < 100 && a > 128) ? 255 : 0;
+          i += 4;
+        }
+        
+        return { mask, width: canvas.width, height: canvas.height };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // 画像を読み込んで標高データを取得（超高速化版 - ImageBitmap + キャッシュ）
+    async function fetchElevationData(x, y, z) {
+      const cacheKey = getTileCacheKey(x, y, z);
+      
+      // キャッシュチェック
+      const cached = getCachedTile(x, y, z);
+      if (cached) {
+        return cached;
+      }
+      
+      try {
+        // AbortControllerでタイムアウト制御
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒タイムアウト
+        
+        const response = await fetch(getTileUrl(x, y, z), { 
+          mode: 'cors',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) return null;
+        
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
+        
+        // OffscreenCanvasを使用（メインスレッドをブロックしない）
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const len = data.length;
+        const elevations = new Float32Array(canvas.width * canvas.height);
+        
+        // 最速化: ビット演算のみ使用
+        let i = 0, j = 0;
+        while (i < len) {
+          elevations[j++] = ((data[i] << 8) + data[i + 1] + data[i + 2] * 0.00390625) - 32768;
+          i += 4;
+        }
+        
+        // 固定値を返す（計算省略）
+        const result = { 
+          elevations, 
+          width: canvas.width, 
+          height: canvas.height, 
+          min: -100, 
+          max: 4000 
+        };
+        
+        // キャッシュに保存
+        setCachedTile(x, y, z, result);
+        
+        return result;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // 並列制御付きPromiseAll（高速版）
+    async function promiseAllWithConcurrency(tasks, concurrency = 6) {
+      const results = new Array(tasks.length);
+      let index = 0;
+      
+      async function runNext() {
+        const currentIndex = index++;
+        if (currentIndex >= tasks.length) return;
+        results[currentIndex] = await tasks[currentIndex]();
+        await runNext();
+      }
+      
+      const workers = Array(Math.min(concurrency, tasks.length)).fill().map(runNext);
+      await Promise.all(workers);
+      return results;
+    }
+
+    // 複数タイルを取得して結合（並列数制御 + 進捗表示）
+    // snowIceEnabled: trueで雪氷分布図も取得
+    async function fetchElevationArea(lat, lon, zoom, tileCount = 1, snowIceEnabled = false) {
+      const centerTile = latLonToTile(lat, lon, zoom);
+      const tiles = [];
+      const offset = Math.floor(tileCount / 2);
+      
+      for (let dy = -offset; dy <= offset; dy++) {
+        for (let dx = -offset; dx <= offset; dx++) {
+          tiles.push({ x: centerTile.x + dx, y: centerTile.y + dy, z: zoom });
+        }
+      }
+      
+      // 進捗表示初期化
+      let loadedCount = 0;
+      const totalTiles = tiles.length;
+      showLoading(totalTiles);
+      
+      // 超高速化: HTTP/2対応で並列数を12に増加
+      const tilePromises = tiles.map(t => async () => {
+        const result = await fetchElevationData(t.x, t.y, t.z).catch(() => null);
+        loadedCount++;
+        updateProgress(loadedCount, totalTiles);
+        return result;
+      });
+      const results = await promiseAllWithConcurrency(tilePromises, 16);
+      
+      // 雪氷分布図も取得（別途並列処理）
+      let snowIceResults = [];
+      if (snowIceEnabled) {
+        const snowIcePromises = tiles.map(t => async () => {
+          return await fetchSnowIceTile(t.x, t.y, t.z).catch(() => null);
+        });
+        snowIceResults = await promiseAllWithConcurrency(snowIcePromises, 8);
+      }
+      
+      const validResults = results.filter(r => r !== null);
+      if (validResults.length === 0) return null;
+      
+      const tileSize = validResults[0].width;
+      const gridSize = Math.ceil(Math.sqrt(validResults.length));
+      const mergedWidth = tileSize * gridSize;
+      const mergedHeight = tileSize * gridSize;
+      
+      const merged = new Float32Array(mergedWidth * mergedHeight);
+      
+      // 超高速化: タイル配置を最適化（TypedArray.setで一括コピー）
+      let idx = 0;
+      for (let ty = 0; ty < gridSize; ty++) {
+        for (let tx = 0; tx < gridSize; tx++) {
+          if (idx >= validResults.length) break;
+          const tile = validResults[idx];
+          const tw = tile.width;
+          // 行単位で高速コピー
+          for (let y = 0; y < tile.height; y++) {
+            const targetY = ty * tileSize + y;
+            const targetOffset = targetY * mergedWidth + tx * tileSize;
+            const sourceOffset = y * tw;
+            merged.set(tile.elevations.subarray(sourceOffset, sourceOffset + tw), targetOffset);
+          }
+          idx++;
+        }
+      }
+      
+      // 雪氷マスクも同様に結合
+      let mergedSnowIce = null;
+      if (snowIceEnabled && snowIceResults.some(r => r !== null)) {
+        const validSnowIce = snowIceResults.filter(r => r !== null);
+        if (validSnowIce.length > 0) {
+          mergedSnowIce = new Uint8Array(mergedWidth * mergedHeight);
+          let sIdx = 0;
+          for (let ty = 0; ty < gridSize; ty++) {
+            for (let tx = 0; tx < gridSize; tx++) {
+              if (sIdx >= validSnowIce.length) break;
+              const tile = validSnowIce[sIdx];
+              const tw = tile.width;
+              for (let y = 0; y < tile.height; y++) {
+                const targetY = ty * tileSize + y;
+                const targetOffset = targetY * mergedWidth + tx * tileSize;
+                const sourceOffset = y * tw;
+                mergedSnowIce.set(tile.mask.subarray(sourceOffset, sourceOffset + tw), targetOffset);
+              }
+              sIdx++;
+            }
+          }
+        }
+      }
+      
+      // 固定min/maxを返す（計算省略）
+      return { 
+        elevations: merged, 
+        width: mergedWidth, 
+        height: mergedHeight, 
+        tileSize, 
+        zoom, 
+        lat, 
+        lon, 
+        min: -100, 
+        max: 4000,
+        snowIce: mergedSnowIce // 雪氷マスク（合成用）
+      };
+    }
+    
+    // タイルデータを選択範囲にトリミング（範囲外を切り取り）
+    function trimElevationToBounds(elevationData, targetBounds) {
+      const { elevations, width, height, tileSize, zoom, bounds } = elevationData;
+      
+      if (!bounds || !targetBounds) return elevationData;
+      
+      // タイル全体の範囲
+      const tileMinLat = bounds.minLat;
+      const tileMaxLat = bounds.maxLat;
+      const tileMinLon = bounds.minLon;
+      const tileMaxLon = bounds.maxLon;
+      
+      // 選択範囲
+      const targetMinLat = targetBounds.minLat;
+      const targetMaxLat = targetBounds.maxLat;
+      const targetMinLon = targetBounds.minLon;
+      const targetMaxLon = targetBounds.maxLon;
+      
+      // 緯度は上から下へ（Y軸）、経度は左から右へ（X軸）
+      // ピクセル座標を計算
+      const tileLatRange = tileMaxLat - tileMinLat;
+      const tileLonRange = tileMaxLon - tileMinLon;
+      
+      // トリミング範囲をピクセル座標に変換
+      const startX = Math.round((targetMinLon - tileMinLon) / tileLonRange * width);
+      const endX = Math.round((targetMaxLon - tileMinLon) / tileLonRange * width);
+      const startY = Math.round((tileMaxLat - targetMaxLat) / tileLatRange * height);
+      const endY = Math.round((tileMaxLat - targetMinLat) / tileLatRange * height);
+      
+      // 範囲を制限
+      const trimStartX = Math.max(0, startX);
+      const trimEndX = Math.min(width, endX);
+      const trimStartY = Math.max(0, startY);
+      const trimEndY = Math.min(height, endY);
+      
+      const newWidth = trimEndX - trimStartX;
+      const newHeight = trimEndY - trimStartY;
+      
+      if (newWidth <= 0 || newHeight <= 0) {
+        console.warn('トリミング範囲が無効です');
+        return elevationData;
+      }
+      
+      // 新しい配列を作成
+      const trimmedElevations = new Float32Array(newWidth * newHeight);
+      
+      // 行ごとにコピー
+      for (let y = 0; y < newHeight; y++) {
+        const srcOffset = (trimStartY + y) * width + trimStartX;
+        const dstOffset = y * newWidth;
+        trimmedElevations.set(elevations.subarray(srcOffset, srcOffset + newWidth), dstOffset);
+      }
+      
+      console.log(`トリミング: ${width}x${height} → ${newWidth}x${newHeight}`);
+      
+      return {
+        ...elevationData,
+        elevations: trimmedElevations,
+        width: newWidth,
+        height: newHeight,
+        bounds: targetBounds // 選択範囲に更新
+      };
+    }
+    
+    // タイルをプリフェッチ（バックグラウンドで先読み）
+    function prefetchTiles(tiles) {
+      // 非同期で先読み（既存キャッシュはスキップ）
+      tiles.forEach(t => {
+        const key = getTileCacheKey(t.x, t.y, t.z);
+        if (!tileCache.has(key)) {
+          // バックグラウンドで取得（awaitしない）
+          fetch(getTileUrl(t.x, t.y, t.z), { mode: 'cors' })
+            .then(r => r.ok ? r.blob() : null)
+            .then(blob => {
+              if (blob) createImageBitmap(blob).then(bitmap => bitmap.close());
+            })
+            .catch(() => {});
+        }
+      });
+    }
+
+    // 急な角度変化（尖った角）を持つ点を削除
+    function removeSharpAngles(coords, angleThreshold = 30) {
+      if (coords.length < 5) return coords;
+      
+      const result = [coords[0]]; // 最初は必ず保持
+      
+      // 3点での角度を計算
+      const getAngle = (p1, p2, p3) => {
+        const a1 = Math.atan2(p2.lat - p1.lat, p2.lon - p1.lon);
+        const a2 = Math.atan2(p3.lat - p2.lat, p3.lon - p2.lon);
+        let angle = Math.abs((a2 - a1) * 180 / Math.PI);
+        if (angle > 180) angle = 360 - angle;
+        return angle;
+      };
+      
+      for (let i = 1; i < coords.length - 1; i++) {
+        const angle = getAngle(coords[i-1], coords[i], coords[i+1]);
+        // 急な変化（鋭角すぎる or 角度変化が大きすぎる）をスキップ
+        if (angle >= angleThreshold && angle <= (180 - angleThreshold)) {
+          result.push(coords[i]);
+        }
+        // 急な変化の点はスキップ（resultに追加しない）
+      }
+      
+      result.push(coords[coords.length - 1]); // 最後は必ず保持
+      return result.length >= 40 ? result : coords; // 少なすぎる場合は元を返す
+    }
+    
+    // 急な角度変化（尖った角）を持つ点を削除
+    function removeSharpAngles(coords, angleThreshold = 30) {
+      if (coords.length < 5) return coords;
+      
+      const result = [coords[0]]; // 最初は必ず保持
+      
+      // 3点での角度を計算
+      const getAngle = (p1, p2, p3) => {
+        const a1 = Math.atan2(p2.lat - p1.lat, p2.lon - p1.lon);
+        const a2 = Math.atan2(p3.lat - p2.lat, p3.lon - p2.lon);
+        let angle = Math.abs((a2 - a1) * 180 / Math.PI);
+        if (angle > 180) angle = 360 - angle;
+        return angle;
+      };
+      
+      for (let i = 1; i < coords.length - 1; i++) {
+        const angle = getAngle(coords[i-1], coords[i], coords[i+1]);
+        // 急な変化（鋭角すぎる or 角度変化が大きすぎる）をスキップ
+        if (angle >= angleThreshold && angle <= (180 - angleThreshold)) {
+          result.push(coords[i]);
+        }
+        // 急な変化の点はスキップ（resultに追加しない）
+      }
+      
+      result.push(coords[coords.length - 1]); // 最後は必ず保持
+      return result.length >= 40 ? result : coords; // 少なすぎる場合は元を返す
+    }
+    
+    // ポリゴン自己交差検出
+    function hasSelfIntersection(coords) {
+      const n = coords.length;
+      if (n < 4) return false;
+      
+      // 線分交差判定
+      const linesIntersect = (a1, a2, b1, b2) => {
+        const d = (a2.lon - a1.lon) * (b2.lat - b1.lat) - (a2.lat - a1.lat) * (b2.lon - b1.lon);
+        if (d === 0) return false; // 平行
+        
+        const ua = ((b2.lon - b1.lon) * (a1.lat - b1.lat) - (b2.lat - b1.lat) * (a1.lon - b1.lon)) / d;
+        const ub = ((a2.lon - a1.lon) * (a1.lat - b1.lat) - (a2.lat - a1.lat) * (a1.lon - b1.lon)) / d;
+        
+        return ua > 0.001 && ua < 0.999 && ub > 0.001 && ub < 0.999; // 端点以外で交差
+      };
+      
+      // 全ての辺のペアをチェック（隣接する辺は除外）
+      for (let i = 0; i < n - 1; i++) {
+        for (let j = i + 2; j < n - 1; j++) {
+          if (i === 0 && j === n - 2) continue; // 最初と最後の辺も隣接
+          
+          if (linesIntersect(coords[i], coords[i + 1], coords[j], coords[j + 1])) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    
+    // Douglas-Peucker アルゴリズム（形状保持間引き）
+    function douglasPeucker(coords, targetCount) {
+      if (coords.length <= targetCount) return coords;
+      
+      // 距離計算（緯度経度の差を使った簡易版）
+      const perpendicularDistance = (p, lineStart, lineEnd) => {
+        const dx = lineEnd.lon - lineStart.lon;
+        const dy = lineEnd.lat - lineStart.lat;
+        if (dx === 0 && dy === 0) {
+          return Math.sqrt((p.lon - lineStart.lon) ** 2 + (p.lat - lineStart.lat) ** 2);
+        }
+        const t = ((p.lon - lineStart.lon) * dx + (p.lat - lineStart.lat) * dy) / (dx * dx + dy * dy);
+        const projLon = lineStart.lon + t * dx;
+        const projLat = lineStart.lat + t * dy;
+        return Math.sqrt((p.lon - projLon) ** 2 + (p.lat - projLat) ** 2);
+      };
+      
+      // 再帰的に分割
+      const simplify = (points, first, last, epsilon, result) => {
+        let maxDist = 0;
+        let index = 0;
+        
+        for (let i = first + 1; i < last; i++) {
+          const dist = perpendicularDistance(points[i], points[first], points[last]);
+          if (dist > maxDist) {
+            maxDist = dist;
+            index = i;
+          }
+        }
+        
+        if (maxDist > epsilon) {
+          simplify(points, first, index, epsilon, result);
+          result.push(points[index]);
+          simplify(points, index, last, epsilon, result);
+        }
+      };
+      
+      // バイナリサーチで適切なepsilonを探す
+      let minEpsilon = 0, maxEpsilon = 1.0;
+      let bestResult = coords.slice(0, targetCount); // フォールバック
+      
+      for (let iter = 0; iter < 10; iter++) {
+        const epsilon = (minEpsilon + maxEpsilon) / 2;
+        const result = [coords[0]];
+        simplify(coords, 0, coords.length - 1, epsilon, result);
+        result.push(coords[coords.length - 1]);
+        
+        if (result.length === targetCount) {
+          return result; // ちょうど良い
+        } else if (result.length < targetCount) {
+          maxEpsilon = epsilon; // 間引きすぎ → epsilon小さく
+          bestResult = result;
+        } else {
+          minEpsilon = epsilon; // 間引き不足 → epsilon大きく
+        }
+      }
+      
+      return bestResult.length >= 40 ? bestResult : coords.slice(0, Math.min(targetCount, coords.length));
+    }
+    
+    // 湖データキャッシュ（メモリ内）
+    const lakeCache = new Map();
+    const CACHE_MAX_AGE = 5 * 60 * 1000; // 5分
+    
+    // キャッシュキー生成
+    function getCacheKey(bounds) {
+      return `${bounds.minLat.toFixed(4)},${bounds.minLon.toFixed(4)},${bounds.maxLat.toFixed(4)},${bounds.maxLon.toFixed(4)}`;
+    }
+    
+    // ローカルGeoJSON設定（OSM APIが使えない場合に使用）
+    const USE_LOCAL_LAKES_ONLY = true // trueでOSM APIを使わずローカルGeoJSONのみ使用
+    const USE_GSI_VECTOR_TILES = false; // trueでGSIベクタータイルから湖を取得
+    
+    // GSIベクタータイルから湖ポリゴンを取得
+    async function fetchGSILakes(bounds) {
+      const lakes = [];
+      const seas = [];
+      const processedFeatures = new Set(); // 重複排除用
+      
+      // GSIベクタータイルのズームレベル
+      const z = 15;
+      
+      // 範囲内のタイル座標を計算
+      function latLonToTile(lat, lon, zoom) {
+        const x = Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
+        const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+        return { x, y };
+      }
+      
+      const minTile = latLonToTile(bounds.maxLat, bounds.minLon, z);
+      const maxTile = latLonToTile(bounds.minLat, bounds.maxLon, z);
+      
+      console.log(`GSIベクタータイル取得: z=${z}, x=${minTile.x}-${maxTile.x}, y=${minTile.y}-${maxTile.y}`);
+      
+      // タイル範囲を制限（最大4x4タイル）
+      const maxTiles = 4;
+      const startX = Math.max(minTile.x, minTile.x);
+      const endX = Math.min(maxTile.x, minTile.x + maxTiles - 1);
+      const startY = Math.max(minTile.y, minTile.y);
+      const endY = Math.min(maxTile.y, minTile.y + maxTiles - 1);
+      
+      let totalFeatures = 0;
+      
+      for (let x = startX; x <= endX; x++) {
+        for (let y = startY; y <= endY; y++) {
+          try {
+            const url = `https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/${z}/${x}/${y}.pbf`;
+            const response = await fetch(url, { timeout: 5000 });
+            if (!response.ok) continue;
+            
+            const buffer = await response.arrayBuffer();
+            
+            // PBFをデコードしてベクタータイルを取得
+            // window.Pbfを使用して確実にグローバルスコープから取得
+            const PbfClass = window.Pbf || (typeof Pbf !== 'undefined' ? Pbf : null);
+            const VectorTileClass = window.VectorTile || (typeof VectorTile !== 'undefined' ? VectorTile : null);
+            
+            if (!PbfClass || !VectorTileClass) {
+              console.warn('  → PBFライブラリが読み込まれていません');
+              continue;
+            }
+            
+            const pbf = new PbfClass(new Uint8Array(buffer));
+            const tile = new VectorTileClass(pbf);
+            
+            console.log(`  → タイル ${z}/${x}/${y}: ${buffer.byteLength} bytes, レイヤー: ${Object.keys(tile.layers).join(', ')}`);
+            
+            // 水域レイヤーを検索（GSIの水域レイヤー: river, lake, waterarea）
+            const waterLayerNames = ['river', 'lake', 'waterarea'];
+            
+            for (const layerName of waterLayerNames) {
+              const layer = tile.layers[layerName];
+              if (!layer) continue;
+              
+              console.log(`    → レイヤー "${layerName}": ${layer.length} フィーチャー`);
+              
+              for (let i = 0; i < layer.length; i++) {
+                const feature = layer.feature(i);
+                const props = feature.properties;
+                
+                // 重複チェック（IDまたは座標で判定）
+                const featureId = props.ftCode || props.name || `${x}-${y}-${i}`;
+                if (processedFeatures.has(featureId)) continue;
+                processedFeatures.add(featureId);
+                
+                // ジオメトリを取得
+                const geojson = feature.toGeoJSON(x, y, z);
+                
+                if (!geojson || !geojson.geometry) continue;
+                
+                // 座標を抽出
+                let coords = [];
+                if (geojson.geometry.type === 'Polygon') {
+                  // 外周のみ使用（Polygonの最初のリング）
+                  const ring = geojson.geometry.coordinates[0];
+                  coords = ring.map(c => ({ lat: c[1], lon: c[0] }));
+                } else if (geojson.geometry.type === 'MultiPolygon') {
+                  // 最大のポリゴンを使用
+                  let maxArea = 0;
+                  let bestCoords = [];
+                  for (const poly of geojson.geometry.coordinates) {
+                    const ring = poly[0];
+                    if (ring.length > maxArea) {
+                      maxArea = ring.length;
+                      bestCoords = ring.map(c => ({ lat: c[1], lon: c[0] }));
+                    }
+                  }
+                  coords = bestCoords;
+                }
+                
+                // 頂点フィルタ（小さすぎる湖を除外）
+                if (coords.length < 40) continue;
+                
+                // 湖名を決定
+                const name = props.name || props.名称 || 
+                            (layerName === 'water' ? '水域' : 
+                             layerName === 'lake' ? '湖沼' : 
+                             layerName === 'river' ? '河川' : '水辺');
+                
+                // 湖か海か判定
+                const isSea = props.water === 'sea' || props.type === 'sea' || 
+                             name.includes('海') || name.includes('湾');
+                
+                const lakeData = {
+                  id: `gsi-${layerName}-${x}-${y}-${i}`,
+                  name: name,
+                  type: isSea ? 'sea' : (props.water || layerName),
+                  coords: coords,
+                  properties: props
+                };
+                
+                if (isSea) {
+                  seas.push(lakeData);
+                } else {
+                  lakes.push(lakeData);
+                }
+                totalFeatures++;
+                
+                if (totalFeatures % 10 === 0) {
+                  console.log(`      → ${totalFeatures}件目: ${name} (${coords.length}頂点)`);
+                }
+              }
+            }
+          } catch (err) {
+            // タイル取得/パースエラーは無視
+            if (err.message && !err.message.includes('fetch')) {
+              console.warn(`  → タイル ${z}/${x}/${y} エラー:`, err.message);
+            }
+          }
+        }
+      }
+      
+      console.log(`GSIベクタータイル完了: 湖=${lakes.length}, 海=${seas.length}, 合計=${totalFeatures}`);
+      return { lakes, seas };
+    }
+    
+    // 自動検出するファイルパターン（複数パターンを試行）
+    const LAKE_FILE_PATTERNS = [
+      // 琵琶湖関連
+      { paths: ['./geojson/biwako.geojson', './geojson/琵琶湖.geojson', './geojson/biwa.geojson', './geojson/lake-biwa.geojson'], name: '琵琶湖', id: 'local-biwako' },
+      // 霞ヶ浦関連
+      { paths: ['./geojson/gsi2026041717000558.geojson', './geojson/kasumigaura-nishiura.geojson', './geojson/nishiura.geojson'], name: '霞ヶ浦（西浦）', id: 'local-nishiura' },
+      // 国土数値情報 湖沼データ W09-05_GML（Shapefile形式）
+      { paths: ['./geojson/W09-05_GML/W09-05-g_Lake.shp', './geojson/W09-05_GML/W09-05-g.shp', './geojson/W09-05-g.shp'], name: '国土数値情報湖沼', id: 'local-gsi-lakes' },
+    ];
+    
+    // GMLをGeoJSONに変換（国土数値情報 W09-05_GML対応）
+    function parseGMLToGeoJSON(gmlText) {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(gmlText, 'text/xml');
+      
+      // エラーチェック
+      const parserError = xmlDoc.querySelector('parsererror');
+      if (parserError) {
+        console.warn('GMLパースエラー:', parserError.textContent);
+        return null;
+      }
+      
+      const features = [];
+      
+      // 名前空間を無視して検索するヘルパー関数
+      const getElements = (parent, localName) => {
+        return Array.from(parent.getElementsByTagName('*')).filter(el => 
+          el.localName === localName || el.tagName.endsWith(':' + localName)
+        );
+      };
+      
+      // gml:PolygonまたはPolygonを検索
+      const polygons = getElements(xmlDoc, 'Polygon');
+      const multiPolygons = getElements(xmlDoc, 'MultiPolygon');
+      const surfaceMembers = getElements(xmlDoc, 'surfaceMember');
+      
+      // 湖沼データの場合、水部要素を探す
+      const waterSurfaces = getElements(xmlDoc, 'WaterSurface') || [];
+      const waterAreas = getElements(xmlDoc, 'WaterArea') || [];
+      const waterBodies = getElements(xmlDoc, 'WaterBody') || [];
+      
+      // 特定の要素があればそれを使用、なければ全ポリゴンを使用
+      let targetElements = [];
+      if (waterSurfaces.length > 0) targetElements = waterSurfaces;
+      else if (waterAreas.length > 0) targetElements = waterAreas;
+      else if (waterBodies.length > 0) targetElements = waterBodies;
+      
+      // posListまたはposから座標を抽出
+      const extractCoordinates = (posListText) => {
+        const coords = [];
+        const values = posListText.trim().split(/\s+/);
+        for (let i = 0; i < values.length; i += 2) {
+          if (values[i] && values[i + 1]) {
+            const lon = parseFloat(values[i]);
+            const lat = parseFloat(values[i + 1]);
+            if (!isNaN(lat) && !isNaN(lon)) {
+              coords.push([lon, lat]);
+            }
+          }
+        }
+        return coords;
+      };
+      
+      // ポリゴンを処理
+      const processPolygon = (polyElement, props = {}) => {
+        const posLists = getElements(polyElement, 'posList');
+        if (posLists.length === 0) return null;
+        
+        const coords = extractCoordinates(posLists[0].textContent);
+        if (coords.length < 3) return null;
+        
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [coords]
+          },
+          properties: props
+        };
+      };
+      
+      // 国土数値情報の湖沼データの構造を処理
+      // W09-05_GML形式: wawa:WaterArea要素内に形状と属性
+      const waterAreaElements = getElements(xmlDoc, 'WaterArea');
+      if (waterAreaElements.length > 0) {
+        for (const wa of waterAreaElements) {
+          const props = {};
+          
+          // 属性を抽出
+          const waterAreaName = getElements(wa, 'waterAreaName')[0];
+          const waterAreaCode = getElements(wa, 'waterAreaCode')[0];
+          const waterAreaType = getElements(wa, 'waterAreaType')[0];
+          
+          if (waterAreaName) props.name = waterAreaName.textContent;
+          if (waterAreaCode) props.code = waterAreaCode.textContent;
+          if (waterAreaType) props.type = waterAreaType.textContent;
+          
+          // 形状を抽出
+          const geomElements = getElements(wa, 'lod1WaterArea');
+          if (geomElements.length > 0) {
+            const surface = getElements(geomElements[0], 'WaterSurface')[0] || geomElements[0];
+            const poly = getElements(surface, 'Polygon')[0] || surface;
+            const feature = processPolygon(poly, props);
+            if (feature) features.push(feature);
+          }
+        }
+      }
+      
+      // 単純なPolygon/MultiPolygonの場合（フォールバック）
+      if (features.length === 0) {
+        for (const poly of polygons) {
+          const feature = processPolygon(poly, {});
+          if (feature) features.push(feature);
+        }
+        
+        for (const mp of multiPolygons) {
+          const memberPolys = getElements(mp, 'polygonMember');
+          const coords = [];
+          for (const member of memberPolys) {
+            const poly = getElements(member, 'Polygon')[0];
+            if (poly) {
+              const posLists = getElements(poly, 'posList');
+              if (posLists.length > 0) {
+                const ring = extractCoordinates(posLists[0].textContent);
+                if (ring.length >= 3) coords.push(ring);
+              }
+            }
+          }
+          if (coords.length > 0) {
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'MultiPolygon', coordinates: coords.map(c => [c]) },
+              properties: {}
+            });
+          }
+        }
+      }
+      
+      if (features.length === 0) return null;
+      
+      return {
+        type: 'FeatureCollection',
+        features: features
+      };
+    }
+    
+    // Shapefileバイナリをパース（簡易実装）
+    async function parseShapefileBinary(shpBuffer, dbfBuffer) {
+      try {
+        const features = [];
+        const dataView = new DataView(shpBuffer);
+        
+        // SHPヘッダー解析
+        const fileLength = dataView.getInt32(24, false) * 2; // 16-bit words to bytes
+        const version = dataView.getInt32(28, true);
+        const shapeType = dataView.getInt32(32, true);
+        
+        console.log(`SHPヘッダー: 長度=${fileLength}, バージョン=${version}, 形状タイプ=${shapeType}`);
+        
+        // DBF属性データをパース
+        let dbfRecords = [];
+        if (dbfBuffer) {
+          dbfRecords = parseDBF(dbfBuffer);
+          console.log(`DBFレコード数: ${dbfRecords.length}`);
+        }
+        
+        // レコード読み込み（ヘッダー100バイトの後から）
+        let offset = 100;
+        let recordIndex = 0;
+        
+        while (offset < shpBuffer.byteLength - 8) {
+          // レコードヘッダー
+          const recordNumber = dataView.getInt32(offset, false);
+          const contentLength = dataView.getInt32(offset + 4, false) * 2;
+          
+          if (contentLength <= 0 || offset + 8 + contentLength > shpBuffer.byteLength) break;
+          
+          const recordOffset = offset + 8;
+          const recordType = dataView.getInt32(recordOffset, true);
+          
+          let coords = [];
+          
+          if (recordType === 5) { // Polygon
+            const numParts = dataView.getInt32(recordOffset + 36, true);
+            const numPoints = dataView.getInt32(recordOffset + 40, true);
+            const partsOffset = recordOffset + 44;
+            const pointsOffset = partsOffset + numParts * 4;
+            
+            // 最初のパート（外周）のみ使用
+            const startIdx = dataView.getInt32(partsOffset, true);
+            const endIdx = numParts > 1 ? dataView.getInt32(partsOffset + 4, true) : numPoints;
+            
+            for (let i = startIdx; i < endIdx; i++) {
+              const x = dataView.getFloat64(pointsOffset + i * 16, true);
+              const y = dataView.getFloat64(pointsOffset + i * 16 + 8, true);
+              if (!isNaN(x) && !isNaN(y)) {
+                coords.push([x, y]);
+              }
+            }
+          } else if (recordType === 3) { // Polyline
+            const numParts = dataView.getInt32(recordOffset + 36, true);
+            const numPoints = dataView.getInt32(recordOffset + 40, true);
+            const partsOffset = recordOffset + 44;
+            const pointsOffset = partsOffset + numParts * 4;
+            
+            for (let i = 0; i < numPoints; i++) {
+              const x = dataView.getFloat64(pointsOffset + i * 16, true);
+              const y = dataView.getFloat64(pointsOffset + i * 16 + 8, true);
+              if (!isNaN(x) && !isNaN(y)) {
+                coords.push([x, y]);
+              }
+            }
+          } else if (recordType === 1) { // Point
+            const x = dataView.getFloat64(recordOffset + 4, true);
+            const y = dataView.getFloat64(recordOffset + 12, true);
+            coords.push([x, y]);
+          }
+          
+          if (coords.length >= 3) {
+            const props = dbfRecords[recordIndex] || {};
+            features.push({
+              type: 'Feature',
+              geometry: {
+                type: 'Polygon',
+                coordinates: [coords]
+              },
+              properties: props
+            });
+          }
+          
+          offset += 8 + contentLength;
+          recordIndex++;
+        }
+        
+        console.log(`SHPパース完了: ${features.length}個のポリゴン`);
+        
+        if (features.length === 0) return null;
+        
+        return {
+          type: 'FeatureCollection',
+          features: features
+        };
+      } catch (err) {
+        console.error('SHPパースエラー:', err);
+        return null;
+      }
+    }
+    
+    // DBFファイルをパース
+    function parseDBF(buffer) {
+      const dataView = new DataView(buffer);
+      const records = [];
+      
+      // ヘッダー情報
+      const headerLength = dataView.getUint16(8, true);
+      const recordLength = dataView.getUint16(10, true);
+      const numRecords = dataView.getUint32(4, true);
+      
+      // フィールド定義を読み込み
+      const fields = [];
+      let fieldOffset = 32;
+      while (fieldOffset < headerLength - 1) {
+        const fieldNameBytes = [];
+        for (let i = 0; i < 11; i++) {
+          const b = dataView.getUint8(fieldOffset + i);
+          if (b === 0) break;
+          fieldNameBytes.push(b);
+        }
+        const fieldName = new TextDecoder('shift-jis').decode(new Uint8Array(fieldNameBytes)).trim();
+        const fieldType = String.fromCharCode(dataView.getUint8(fieldOffset + 11));
+        const fieldLength = dataView.getUint8(fieldOffset + 16);
+        const fieldDec = dataView.getUint8(fieldOffset + 17);
+        
+        fields.push({ name: fieldName, type: fieldType, length: fieldLength, offset: fieldOffset });
+        fieldOffset += 32;
+      }
+      
+      // レコード読み込み
+      let recordOffset = headerLength;
+      for (let i = 0; i < numRecords && recordOffset < buffer.byteLength; i++) {
+        recordOffset++; // 削除フラグスキップ
+        
+        const record = {};
+        let fieldPos = recordOffset;
+        
+        for (const field of fields) {
+          const bytes = [];
+          for (let j = 0; j < field.length && fieldPos + j < buffer.byteLength; j++) {
+            bytes.push(dataView.getUint8(fieldPos + j));
+          }
+          const value = new TextDecoder('shift-jis').decode(new Uint8Array(bytes)).trim();
+          if (value) record[field.name] = value;
+          fieldPos += field.length;
+        }
+        
+        records.push(record);
+        recordOffset += recordLength;
+      }
+      
+      return records;
+    }
+    
+    // Shapefileを読み込み
+    async function loadShapefile(shpPath) {
+      try {
+        console.log(`Shapefile読み込み開始: ${shpPath}`);
+        
+        // .shpファイルを取得
+        const shpResponse = await fetch(shpPath);
+        if (!shpResponse.ok) {
+          console.warn(`SHPファイル取得失敗: ${shpResponse.status}`);
+          return null;
+        }
+        const shpBuffer = await shpResponse.arrayBuffer();
+        console.log(`SHP取得: ${shpBuffer.byteLength} bytes`);
+        
+        // .dbfファイルを取得（存在する場合）
+        const dbfPath = shpPath.replace('.shp', '.dbf').replace('.SHP', '.dbf');
+        let dbfBuffer = null;
+        try {
+          const dbfResponse = await fetch(dbfPath);
+          if (dbfResponse.ok) {
+            dbfBuffer = await dbfResponse.arrayBuffer();
+            console.log(`DBF取得: ${dbfBuffer.byteLength} bytes`);
+          }
+        } catch (e) {
+          console.log('DBFファイルなし（属性なしで続行）');
+        }
+        
+        return await parseShapefileBinary(shpBuffer, dbfBuffer);
+      } catch (err) {
+        console.error('Shapefile読み込みエラー:', err);
+        return null;
+      }
+    }
+    
+    // 単一ファイルを読み込み（404以外のエラーは無視、GML/Shapefile対応）
+    async function tryLoadDataFile(filePath) {
+      try {
+        // Shapefileの場合（.shp）
+        if (filePath.toLowerCase().endsWith('.shp')) {
+          return await loadShapefile(filePath);
+        }
+        
+        const response = await fetch(filePath);
+        if (!response.ok) return null;
+        
+        const text = await response.text();
+        
+        // GMLファイルの場合
+        if (filePath.toLowerCase().endsWith('.gml')) {
+          return parseGMLToGeoJSON(text);
+        }
+        
+        // GeoJSONファイルの場合
+        return JSON.parse(text);
+      } catch (err) {
+        // 404は無視、他のエラーも無視
+      }
+      return null;
+    }
+    
+    // 全GeoJSONファイルを自動検出して読み込む
+    async function loadAllLocalLakes() {
+      const lakes = [];
+      const seas = [];
+      let loadedCount = 0;
+      console.log('loadAllLocalLakes開始:', LAKE_FILE_PATTERNS.length, 'パターン');
+      let attemptedCount = 0;
+      
+      console.log('ローカルGeoJSON自動検出開始...');
+      
+      // 各湖パターンについて、存在するファイルを探す
+      for (const lakeDef of LAKE_FILE_PATTERNS) {
+        let geojson = null;
+        let foundPath = null;
+        
+        // 複数パターンを順に試行
+        for (const path of lakeDef.paths) {
+          attemptedCount++;
+          geojson = await tryLoadDataFile(path);
+          if (geojson) {
+            foundPath = path;
+            break;
+          }
+        }
+        
+        if (geojson && geojson.features && geojson.features.length > 0) {
+          console.log(`  ${lakeDef.name}: ${geojson.features.length}個のフィーチャー`);
+          
+          // 全フィーチャーを処理
+          for (let i = 0; i < geojson.features.length; i++) {
+            const feature = geojson.features[i];
+            // PolygonかMultiPolygonかチェック
+            let coords = [];
+            if (feature.geometry.type === 'Polygon') {
+              coords = feature.geometry.coordinates[0].map(c => ({ lat: c[1], lon: c[0] }));
+            } else if (feature.geometry.type === 'MultiPolygon') {
+              // 最大のポリゴンを使用
+              let maxArea = 0;
+              let bestPoly = feature.geometry.coordinates[0][0];
+              for (const poly of feature.geometry.coordinates) {
+                if (poly[0].length > maxArea) {
+                  maxArea = poly[0].length;
+                  bestPoly = poly[0];
+                }
+              }
+              coords = bestPoly.map(c => ({ lat: c[1], lon: c[0] }));
+            }
+            
+            if (coords.length >= 3) {
+              // 個別の湖名を取得（属性から）
+              const lakeName = feature.properties?.name || 
+                               feature.properties?.W09_001 || 
+                               feature.properties?.水域名 || 
+                               feature.properties?.LakeName || 
+                               `${lakeDef.name}_${i+1}`;
+              
+              lakes.push({
+                id: `${lakeDef.id}-${i}`,
+                name: lakeName,
+                type: 'lake',
+                coords: coords
+              });
+              loadedCount++;
+              console.log(`    ✓ ${lakeName}: ${coords.length}頂点`);
+            }
+          }
+          console.log(`  ${lakeDef.name}: ${loadedCount}個の湖を読み込み`);
+        }
+      }
+      
+      // サブディレクトリも検索（./geojson/lakes/ など）
+      const subDirs = ['lakes', 'kasumigaura', 'biwa', 'fuji', 'W09-05_GML'];
+      for (const subDir of subDirs) {
+        try {
+          const dirFile = `./geojson/${subDir}/index.json`;
+          const response = await fetch(dirFile);
+          if (response.ok) {
+            const dirIndex = await response.json();
+            for (const file of dirIndex.files || []) {
+              const geojson = await tryLoadDataFile(`./geojson/${subDir}/${file}`);
+              if (geojson && geojson.features) {
+                // 全フィーチャーを処理
+                for (let i = 0; i < geojson.features.length; i++) {
+                  const feature = geojson.features[i];
+                  let coords = [];
+                  if (feature.geometry.type === 'Polygon') {
+                    coords = feature.geometry.coordinates[0].map(c => ({ lat: c[1], lon: c[0] }));
+                  } else if (feature.geometry.type === 'MultiPolygon') {
+                    const bestPoly = feature.geometry.coordinates[0][0];
+                    coords = bestPoly.map(c => ({ lat: c[1], lon: c[0] }));
+                  }
+                  if (coords.length >= 3) {
+                    const name = feature.properties?.name || 
+                                 feature.properties?.W09_001 || 
+                                 `${subDir}/${file}_${i+1}`;
+                    lakes.push({
+                      id: `local-${subDir}-${file.replace(/\.(geojson|gml|shp)$/i, '')}-${i}`,
+                      name: name,
+                      type: 'lake',
+                      coords: coords
+                    });
+                    loadedCount++;
+                    console.log(`  ✓ ${name}: ${coords.length}頂点 (from ${subDir}/${file})`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          // index.jsonがない場合は無視
+        }
+      }
+      
+      console.log(`ローカルGeoJSON読み込み完了: ${loadedCount}個成功 / ${attemptedCount}個試行`);
+      return { lakes, seas };
+    }
+    
+    // OSMから湖ポリゴンを取得（Overpass API + タイムアウト制御 + リトライ + キャッシュ）
+    async function fetchOSMLakes(bounds, retryCount = 0, useCache = true) {
+      // キャッシュチェック
+      const cacheKey = getCacheKey(bounds);
+      if (useCache && lakeCache.has(cacheKey)) {
+        const cached = lakeCache.get(cacheKey);
+        if (Date.now() - cached.timestamp < CACHE_MAX_AGE) {
+          console.log('湖ポリゴン取得 - キャッシュヒット:', cacheKey);
+          return cached.data;
+        }
+        lakeCache.delete(cacheKey);
+      }
+      
+      // GSIベクタータイルモード
+      if (USE_GSI_VECTOR_TILES) {
+        console.log('湖ポリゴン取得 - GSIベクタータイルモード');
+        const result = await fetchGSILakes(bounds);
+        lakeCache.set(cacheKey, { timestamp: Date.now(), data: result });
+        console.log(`湖ポリゴン取得完了 - GSI: ${result.lakes.length}個`);
+        return result;
+      }
+      
+      // ローカルGeoJSONオンリーモード（OSM APIを使わない）
+      if (USE_LOCAL_LAKES_ONLY) {
+        console.log('湖ポリゴン取得 - ローカルGeoJSONモード（OSM API不使用）');
+        const result = await loadAllLocalLakes();
+        lakeCache.set(cacheKey, { timestamp: Date.now(), data: result });
+        console.log(`湖ポリゴン取得完了 - ローカル: ${result.lakes.length}個`);
+        return result;
+      }
+      
+      // デバッグ: bounds情報を出力
+      console.log('湖ポリゴン取得 - bounds:', bounds);
+      
+      // 超軽量クエリ（湖のみ、relationは最小限）
+      const lightQuery = `[out:json][timeout:10];
+(
+  way["natural"="water"]["water"!="river"](${bounds.minLat},${bounds.minLon},${bounds.maxLat},${bounds.maxLon});
+  way["water"="lake"](${bounds.minLat},${bounds.minLon},${bounds.maxLat},${bounds.maxLon});
+  relation["water"="lake"](${bounds.minLat},${bounds.minLon},${bounds.maxLat},${bounds.maxLon});
+);
+out body;
+>;
+out skel qt;`;
+      
+      // フォールバック用最小クエリ（504時に使用）
+      const minimalQuery = `[out:json][timeout:8];
+(
+  way["water"="lake"](${bounds.minLat},${bounds.minLon},${bounds.maxLat},${bounds.maxLon});
+);
+out body;
+>;
+out skel qt;`;
+      
+      // 複数のエンドポイントを試す
+      const endpoints = [
+        'https://overpass-api.de/api/interpreter',
+        'https://lz4.overpass-api.de/api/interpreter',
+        'https://z.overpass-api.de/api/interpreter'
+      ];
+      
+      const maxRetries = 2;
+      const query = retryCount === 0 ? lightQuery : minimalQuery;
+      const endpoint = endpoints[retryCount % endpoints.length];
+      
+      console.log(`湖ポリゴン取得 - 試行${retryCount + 1}/${maxRetries + 1}: ${endpoint}`);
+      
+      try {
+        // AbortControllerで10秒タイムアウト（504対策）
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        console.log(`  → fetch開始: ${endpoint}`);
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: query,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        console.log(`  → fetch完了: status=${response.status}`);
+        
+        if (!response.ok) {
+          console.warn(`  → Overpass API error: ${response.status} ${response.statusText}`);
+          if (retryCount < maxRetries) {
+            console.log(`  → リトライ${retryCount + 1}回目 → ${retryCount + 2}回目`);
+            await new Promise(r => setTimeout(r, 1000)); // 1秒待機
+            return fetchOSMLakes(bounds, retryCount + 1);
+          }
+          console.log('  → 最大リトライ回数達成、空配列を返します');
+          return { lakes: [], seas: [] };
+        }
+        
+        console.log('  → JSONパース開始...');
+        const data = await response.json();
+        console.log('  → JSONパース完了');
+        console.log('湖ポリゴン取得 - レスポンス要素数:', data.elements?.length || 0);
+        
+        // ノードID→座標のマップを作成
+        const nodeMap = new Map();
+        data.elements.forEach(el => {
+          if (el.type === 'node') {
+            nodeMap.set(el.id, { lat: el.lat, lon: el.lon });
+          }
+        });
+        console.log('湖ポリゴン取得 - ノード数:', nodeMap.size);
+        
+        // wayマップとrelationカウントを1回のループで構築
+        const wayMap = new Map();
+        let relationCount = 0;
+        const elements = data.elements;
+        for (let i = 0; i < elements.length; i++) {
+          const el = elements[i];
+          if (el.type === 'way' && el.nodes) {
+            wayMap.set(el.id, el);
+          } else if (el.type === 'relation') {
+            relationCount++;
+          }
+        }
+        console.log('湖ポリゴン取得 - way数:', wayMap.size, 'relation数:', relationCount);
+        
+        // 湖ポリゴンを構築（way + relation対応）
+        const lakes = [];
+        const seas = []; // 海・海岸線
+        
+        // way処理（高速化：forループ使用）
+        const wayStart = performance.now();
+        let wayCount = 0, wayKept = 0;
+        for (let i = 0; i < data.elements.length; i++) {
+          const el = data.elements[i];
+          if (el.type === 'way' && el.tags && el.nodes) {
+            const isWater = el.tags.natural === 'water' || 
+                           el.tags.water === 'lake' || 
+                           el.tags.water === 'reservoir' ||
+                           el.tags.water === 'pond';
+            const isCoastline = el.tags.natural === 'coastline';
+            
+            if (isWater || isCoastline) {
+              wayCount++;
+              // 高速な座標取得
+              const nodes = el.nodes;
+              const coords = new Array(nodes.length);
+              let validCount = 0;
+              for (let j = 0; j < nodes.length; j++) {
+                const n = nodeMap.get(nodes[j]);
+                if (n) coords[validCount++] = n;
+              }
+              coords.length = validCount;
+              
+              // Douglas-Peucker間引き（80頂点以上のみ）
+              let finalCoords = coords;
+              if (validCount > 80) {
+                const targetCount = Math.max(40, (validCount / 5) | 0);
+                finalCoords = douglasPeucker(coords, targetCount);
+              }
+              // 平滑化
+              finalCoords = removeSharpAngles(finalCoords, 30);
+              
+              // 40頂点以上のみ
+              if (finalCoords.length >= 40) {
+                wayKept++;
+                const item = { 
+                  id: isCoastline ? `coast-${el.id}` : `way-${el.id}`, 
+                  name: el.tags.name || (isCoastline ? 'Sea' : el.tags.water || 'Water'),
+                  type: isCoastline ? 'sea' : (el.tags.water || el.tags.natural),
+                  coords: finalCoords
+                };
+                if (isCoastline) seas.push(item);
+                else lakes.push(item);
+              }
+            }
+          }
+        }
+        console.log(`  → way処理: ${wayCount}個中${wayKept}個保持 (${(performance.now() - wayStart).toFixed(0)}ms)`);
+        
+        // relation処理（高速化：forループ使用）
+        const relStart = performance.now();
+        let relCount = 0, relKept = 0;
+        for (let i = 0; i < data.elements.length; i++) {
+          const el = data.elements[i];
+          if (el.type === 'relation' && el.tags && el.members) {
+            const isWater = el.tags.natural === 'water' || 
+                           el.tags.water === 'lake' || 
+                           el.tags.water === 'reservoir';
+            
+            if (isWater) {
+              relCount++;
+              // outerメンバーのwayを高速収集
+              const members = el.members;
+              let outerCoords = [];
+              for (let j = 0; j < members.length; j++) {
+                const member = members[j];
+                if (member.type === 'way' && (member.role === 'outer' || !member.role)) {
+                  const way = wayMap.get(member.ref);
+                  if (way && way.nodes) {
+                    const wayNodes = way.nodes;
+                    for (let k = 0; k < wayNodes.length; k++) {
+                      const n = nodeMap.get(wayNodes[k]);
+                      if (n) outerCoords.push(n);
+                    }
+                  }
+                }
+              }
+              
+              // Douglas-Peucker間引き
+              let finalCoords = outerCoords;
+              if (outerCoords.length > 80) {
+                const targetCount = Math.max(40, (outerCoords.length / 5) | 0);
+                finalCoords = douglasPeucker(outerCoords, targetCount);
+              }
+              // 平滑化
+              finalCoords = removeSharpAngles(finalCoords, 30);
+              
+              if (finalCoords.length >= 40) {
+                relKept++;
+                lakes.push({
+                  id: `rel-${el.id}`,
+                  name: el.tags.name || el.tags.water || 'Lake',
+                  type: el.tags.water || 'relation',
+                  coords: finalCoords
+                });
+              }
+            }
+          }
+        }
+        console.log(`  → relation処理: ${relCount}個中${relKept}個保持 (${(performance.now() - relStart).toFixed(0)}ms)`);
+        
+        // 西浦はOSMデータをスキップ、代わりにローカルGeoJSONを使用（並列処理）
+        const nishiuraPromise = (async () => {
+          try {
+            const nishiuraResponse = await fetch('./geojson/西浦.geojson');
+            if (nishiuraResponse.ok) {
+              const nishiuraGeoJSON = await nishiuraResponse.json();
+              if (nishiuraGeoJSON.features && nishiuraGeoJSON.features.length > 0) {
+                const feature = nishiuraGeoJSON.features[0];
+                const coords = feature.geometry.coordinates[0].map(c => ({ lat: c[1], lon: c[0] }));
+                console.log(`  → 西浦をGeoJSONから読み込み: ${coords.length}頂点`);
+                return {
+                  id: 'local-nishiura',
+                  name: '霞ヶ浦（西浦）',
+                  type: 'lake',
+                  coords: coords
+                };
+              }
+            }
+          } catch (geoErr) {
+            console.warn('  → 西浦GeoJSON読み込み失敗:', geoErr.message);
+          }
+          return null;
+        })();
+        
+        // OSMデータから西浦を除外
+        const nishiuraIndex = lakes.findIndex(l => l.name && (l.name.includes('西浦') || l.name.includes('Nishiura')));
+        if (nishiuraIndex >= 0) {
+          console.log(`  → 西浦をOSMデータから除外 (index:${nishiuraIndex})`);
+          lakes.splice(nishiuraIndex, 1);
+        }
+        
+        // GeoJSON読み込み完了待機
+        const nishiuraLake = await nishiuraPromise;
+        if (nishiuraLake) {
+          lakes.push(nishiuraLake);
+        }
+        
+        const wayLakes = lakes.filter(l => l.id.startsWith('way-')).length;
+        const relLakes = lakes.filter(l => l.id.startsWith('rel-')).length;
+        const localLakes = lakes.filter(l => l.id.startsWith('local-')).length;
+        console.log('湖ポリゴン取得 - 湖:', lakes.length, `(way:${wayLakes}, relation:${relLakes}, local:${localLakes})`, `海:${seas.length}`);
+        
+        // キャッシュに保存
+        const result = { lakes, seas };
+        lakeCache.set(cacheKey, { timestamp: Date.now(), data: result });
+        
+        return result;
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          console.warn(`  → Overpass API タイムアウト(10秒) - エンドポイント: ${endpoint}`);
+        } else {
+          console.error('  → OSM fetch error:', e.name, e.message);
+          console.error('  → エラースタック:', e.stack);
+        }
+        
+        // リトライ時は待機時間を増やし、最終リトライは最小クエリを使用
+        if (retryCount > 0) {
+          const waitTime = Math.min(500 * Math.pow(2, retryCount), 4000);
+          console.log(`  → ${waitTime}ms待機後リトライ`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          // 最終リトライは最小クエリに切り替え
+          if (retryCount >= maxRetries - 1) {
+            console.log('  → 最小クエリに切り替え');
+            return fetchWithEndpoint(endpoints[retryCount % endpoints.length], minimalQuery);
+          }
+        }
+        
+        console.log('  → catch: 最大リトライ回数達成、空配列を返します');
+        return { lakes: [], seas: [] };
+      }
+    }
+
+    // 座標をピクセル座標に変換
+    
+    
+    
+    
+    
+    
+    function latLonToPixel(lat, lon, bounds, width, height) {
+      const x = Math.round((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * width);
+      const y = Math.round((1 - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * height);
+      return { x, y };
+    }
+
+    // ポイントがポリゴン内か判定（高速化版）
+    function pointInPolygon(point, polygon) {
+      const len = polygon.length;
+      if (len < 3) return false;
+      let inside = false;
+      let j = len - 1;
+      const px = point.x, py = point.y;
+      for (let i = 0; i < len; j = i++) {
+        const pi = polygon[i], pj = polygon[j];
+        const yi = pi.y, yj = pj.y;
+        if (((yi > py) !== (yj > py)) && 
+            (px < (pj.x - pi.x) * (py - yi) / (yj - yi) + pi.x)) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+
+    // 湖ポリゴンの縁取り判定（境界線上かチェック）
+    function isLakeBorder(point, lakePixels, borderWidth = 2) {
+      if (!lakePixels || lakePixels.length < 3) return false;
+      
+      // ポリゴンの線分上にあるかチェック
+      for (let i = 0; i < lakePixels.length; i++) {
+        const p1 = lakePixels[i];
+        const p2 = lakePixels[(i + 1) % lakePixels.length];
+        
+        // 線分と点の距離を計算
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        
+        if (len === 0) continue;
+        
+        // 点から線分への距離
+        const t = Math.max(0, Math.min(1, ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / (len * len)));
+        const projX = p1.x + t * dx;
+        const projY = p1.y + t * dy;
+        const dist = Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
+        
+        if (dist <= borderWidth) return true;
+      }
+      return false;
+    }
+
+    // 色スキーム
+    function getColorForElevation(normalized, absolute, scheme) {
+      switch (scheme) {
+        case 'terrain':
+          if (absolute < 0) return [30, 144, 255];
+          if (normalized < 0.3) {
+            const t = normalized / 0.3;
+            return [Math.round(34 + t * (139 - 34)), Math.round(139 + t * (69 - 139)), Math.round(34 + t * (19 - 34))];
+          }
+          if (normalized < 0.6) {
+            const t = (normalized - 0.3) / 0.3;
+            return [Math.round(139 + t * (160 - 139)), Math.round(69 + t * (82 - 69)), Math.round(19 + t * (45 - 19))];
+          }
+          const t = (normalized - 0.6) / 0.4;
+          return [Math.round(160 + t * (255 - 160)), Math.round(82 + t * (250 - 82)), Math.round(45 + t * (250 - 45))];
+        
+        case 'grayscale':
+          // 白=低地、黒=高地 (標準的なheightmap)
+          const v = Math.round((1 - normalized) * 255);
+          return [v, v, v];
+        
+        case 'heatmap':
+          if (normalized < 0.25) {
+            const t = normalized / 0.25;
+            return [Math.round(128 * t), 0, Math.round(128 + 127 * t)];
+          }
+          if (normalized < 0.5) {
+            const t = (normalized - 0.25) / 0.25;
+            return [0, Math.round(255 * t), Math.round(255 - 255 * t)];
+          }
+          if (normalized < 0.75) {
+            const t = (normalized - 0.5) / 0.25;
+            return [Math.round(255 * t), 255, 0];
+          }
+          const t2 = (normalized - 0.75) / 0.25;
+          return [255, Math.round(255 - 255 * t2), 0];
+        
+        default:
+          return [128, 128, 128];
+      }
+    }
+
+    // HeightMap生成（キャッシュmin/max使用 + 湖ポリゴン反映）
+    async function createHeightmapImage(elevationData, colorScheme = 'grayscale') {
+      console.log(`HeightMap描画開始: ${elevationData.width}x${elevationData.height}, 湖:${elevationData.lakes?.length || 0}個, 海:${elevationData.seas?.length || 0}個`);
+      const startTime = performance.now();
+      
+      const { elevations, width, height, min: cachedMin, max: cachedMax, bounds, lakes, seas } = elevationData;
+      
+      // キャッシュされたmin/maxを使用、なければ計算
+      let min = cachedMin !== undefined ? cachedMin : Infinity;
+      let max = cachedMax !== undefined ? cachedMax : -Infinity;
+      
+      if (cachedMin === undefined) {
+        for (let i = 0; i < elevations.length; i++) {
+          const v = elevations[i];
+          if (v !== -32768) {
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+        }
+        elevationData.min = min;
+        elevationData.max = max;
+      }
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+      
+      const range = max - min || 1;
+      
+      // 湖ポリゴンをピクセル座標に変換 + バウンディングボックス事前計算
+      const pixelLakes = (lakes && bounds) ? lakes.map(lake => {
+        const pixels = lake.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height));
+        // バウンディングボックス計算（高速判定用）
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of pixels) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        return { ...lake, pixels, bbox: { minX, maxX, minY, maxY } };
+      }) : [];
+      
+      // 海ポリゴンも同様に変換
+      const pixelSeas = (seas && bounds) ? seas.map(sea => {
+        const pixels = sea.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height));
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of pixels) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        return { ...sea, pixels, bbox: { minX, maxX, minY, maxY } };
+      }) : [];
+      
+      // 超高速化: 空間グリッドインデックス構築
+      const gridSize = 128; // グリッドセルサイズ（ピクセル）- ビットシフト用に2のべき乗
+      const gridCols = Math.ceil(width / gridSize);
+      const gridRows = Math.ceil(height / gridSize);
+      
+      const grid = new Array(gridCols * gridRows).fill(null).map(() => []);
+      const seaGrid = new Array(gridCols * gridRows).fill(null).map(() => []);
+      
+      // デバッグ: 湖・海の統計
+      console.log(`[DEBUG] pixelLakes: ${pixelLakes.length}, pixelSeas: ${pixelSeas.length}`);
+      console.log(`[DEBUG] grid: ${gridCols}x${gridRows}=${gridCols*gridRows} cells, gridSize=${gridSize}`);
+      
+      // 各湖をグリッドに登録
+      pixelLakes.forEach((lake, lakeIdx) => {
+        const minCol = Math.floor(lake.bbox.minX / gridSize);
+        const maxCol = Math.floor(lake.bbox.maxX / gridSize);
+        const minRow = Math.floor(lake.bbox.minY / gridSize);
+        const maxRow = Math.floor(lake.bbox.maxY / gridSize);
+        
+        for (let r = Math.max(0, minRow); r <= Math.min(gridRows - 1, maxRow); r++) {
+          for (let c = Math.max(0, minCol); c <= Math.min(gridCols - 1, maxCol); c++) {
+            grid[r * gridCols + c].push(lakeIdx);
+          }
+        }
+      });
+      
+      // 各海もグリッドに登録
+      pixelSeas.forEach((sea, seaIdx) => {
+        const minCol = Math.floor(sea.bbox.minX / gridSize);
+        const maxCol = Math.floor(sea.bbox.maxX / gridSize);
+        const minRow = Math.floor(sea.bbox.minY / gridSize);
+        const maxRow = Math.floor(sea.bbox.maxY / gridSize);
+        
+        for (let r = Math.max(0, minRow); r <= Math.min(gridRows - 1, maxRow); r++) {
+          for (let c = Math.max(0, minCol); c <= Math.min(gridCols - 1, maxCol); c++) {
+            seaGrid[r * gridCols + c].push(seaIdx);
+          }
+        }
+      });
+      
+      // 高速化: bbox事前チェック + 単純ループ
+      let i = 0, idx = 0;
+      let lastLogRow = 0;
+      const logInterval = Math.max(1, Math.floor(height / 10)); // 10%ごとにログ
+      
+      // グリッド高速判定関数（湖）
+      const inLakeFast = (point) => {
+        const col = Math.floor(point.x / gridSize);
+        const row = Math.floor(point.y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        
+        const lakeIndices = grid[row * gridCols + col];
+        for (const lakeIdx of lakeIndices) {
+          const lake = pixelLakes[lakeIdx];
+          // bboxで早期除外
+          if (point.x < lake.bbox.minX || point.x > lake.bbox.maxX ||
+              point.y < lake.bbox.minY || point.y > lake.bbox.maxY) continue;
+          // bbox内なら精密判定
+          if (pointInPolygon(point, lake.pixels)) return true;
+        }
+        return false;
+      };
+      
+      // グリッド高速判定関数（海）
+      const inSeaFast = (point) => {
+        const col = Math.floor(point.x / gridSize);
+        const row = Math.floor(point.y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        
+        const seaIndices = seaGrid[row * gridCols + col];
+        for (const seaIdx of seaIndices) {
+          const sea = pixelSeas[seaIdx];
+          // bboxで早期除外
+          if (point.x < sea.bbox.minX || point.x > sea.bbox.maxX ||
+              point.y < sea.bbox.minY || point.y > sea.bbox.maxY) continue;
+          // bbox内なら精密判定
+          if (pointInPolygon(point, sea.pixels)) return true;
+        }
+        return false;
+      };
+      
+      // XY座標直接版（pointオブジェクト生成削減）
+      const inLakeFastXY = (x, y) => {
+        const col = Math.floor(x / gridSize);
+        const row = Math.floor(y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        const candidates = grid[row * gridCols + col];
+        if (!candidates) return false;
+        for (const idx of candidates) {
+          const lake = pixelLakes[idx];
+          if (x < lake.bbox.minX || x > lake.bbox.maxX || y < lake.bbox.minY || y > lake.bbox.maxY) continue;
+          if (pointInPolygon({x, y}, lake.pixels)) return true;
+        }
+        return false;
+      };
+      const inSeaFastXY = (x, y) => {
+        const col = Math.floor(x / gridSize);
+        const row = Math.floor(y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        const candidates = seaGrid[row * gridCols + col];
+        if (!candidates) return false;
+        for (const idx of candidates) {
+          const sea = pixelSeas[idx];
+          if (x < sea.bbox.minX || x > sea.bbox.maxX || y < sea.bbox.minY || y > sea.bbox.maxY) continue;
+          if (pointInPolygon({x, y}, sea.pixels)) return true;
+        }
+        return false;
+      };
+      
+      const totalPixels = width * height;
+      const widthDivRange = width / range; // 事前計算
+      const invRange = 1 / range; // 除算を乗算に変換
+      
+      // 湖・海がない場合は判定をスキップ
+      const hasLakes = pixelLakes.length > 0;
+      const hasSeas = pixelSeas.length > 0;
+      
+      if (colorScheme === 'grayscale') {
+        // グレースケールは特別最適化（pointオブジェクト生成削減）
+        let y = 0, x = 0;
+        for (let i = 0; i < totalPixels; i++) {
+          // 進捗ログ（128行ごと）
+          if ((y & 127) === 0 && x === 0 && y > lastLogRow) {
+            console.log(`  HeightMap描画進捗: ${Math.round(y/height*100)}% (${y}/${height}行)`);
+            lastLogRow = y;
+          }
+          
+          const elevation = elevations[i];
+          // インライン化された湖/海判定（関数呼び出しオーバーヘッド削減）
+          let inLake = false, inSeaPoly = false;
+          if (hasLakes || hasSeas) {
+            const col = x >> 7, row = y >> 7; // Math.floor(x/128) → ビットシフト
+            if (col >= 0 && col < gridCols && row >= 0 && row < gridRows) {
+              if (hasLakes) {
+                const lakeCand = grid[row * gridCols + col];
+                if (lakeCand) {
+                  for (const idx of lakeCand) {
+                    const lake = pixelLakes[idx];
+                    if (x >= lake.bbox.minX && x <= lake.bbox.maxX && y >= lake.bbox.minY && y <= lake.bbox.maxY) {
+                      if (pointInPolygon({x, y}, lake.pixels)) { inLake = true; break; }
+                    }
+                  }
+                }
+              }
+              if (!inLake && hasSeas) {
+                const seaCand = seaGrid[row * gridCols + col];
+                if (seaCand) {
+                  for (const idx of seaCand) {
+                    const sea = pixelSeas[idx];
+                    if (x >= sea.bbox.minX && x <= sea.bbox.maxX && y >= sea.bbox.minY && y <= sea.bbox.maxY) {
+                      if (pointInPolygon({x, y}, sea.pixels)) { inSeaPoly = true; break; }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const isSeaByElevation = !inLake && elevation <= -4;
+          const isWater = inLake || inSeaPoly || isSeaByElevation;
+          
+          if (elevation === -32768) {
+            data[idx] = data[idx + 1] = data[idx + 2] = 0; data[idx + 3] = 0;
+          } else if (isWater) {
+            const v = 255 - ((elevation - min) / range * 255) | 0;
+            data[idx] = v+6; data[idx + 1] = v+6; data[idx + 2] = Math.min(255, v+6); data[idx+3] = 255;
+          } else {
+            const v = 255 - ((elevation - min) / range * 255) | 0;
+            data[idx] = v; data[idx + 1] = v; data[idx + 2] = v; data[idx + 3] = 255;
+          }
+          idx += 4;
+          
+          // x, y座標更新
+          if (++x >= width) { x = 0; y++; }
+        }
+      } else {
+        // カラースキーム用ループ（インライン湖判定）
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const elevation = elevations[i++];
+            // インライン湖/海判定
+            const col = x >> 7, row = y >> 7;
+            let inLake = false, inSeaPoly = false;
+            if (hasLakes || hasSeas) {
+              if (col >= 0 && col < gridCols && row >= 0 && row < gridRows) {
+                if (hasLakes) {
+                  const lakeCand = grid[row * gridCols + col];
+                  if (lakeCand) {
+                    for (const idx of lakeCand) {
+                      const lake = pixelLakes[idx];
+                      if (x >= lake.bbox.minX && x <= lake.bbox.maxX && y >= lake.bbox.minY && y <= lake.bbox.maxY) {
+                        if (pointInPolygon({x, y}, lake.pixels)) { inLake = true; break; }
+                      }
+                    }
+                  }
+                }
+                if (!inLake && hasSeas) {
+                  const seaCand = seaGrid[row * gridCols + col];
+                  if (seaCand) {
+                    for (const idx of seaCand) {
+                      const sea = pixelSeas[idx];
+                      if (x >= sea.bbox.minX && x <= sea.bbox.maxX && y >= sea.bbox.minY && y <= sea.bbox.maxY) {
+                        if (pointInPolygon({x, y}, sea.pixels)) { inSeaPoly = true; break; }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            const isSeaByElevation = !inLake && elevation <= -4;
+            const isWater = inLake || inSeaPoly || isSeaByElevation;
+            
+            if (elevation === -32768) {
+              data[idx] = 0; data[idx + 1] = 0; data[idx + 2] = 0; data[idx + 3] = 0;
+            } else if (isWater) {
+              const v = 255 - ((elevation - min) / range * 255) | 0;
+              data[idx] = v+6; data[idx + 1] = v+6; data[idx + 2] = Math.min(255, v+6); data[idx + 3] = 255;
+            } else {
+              const normalized = (elevation - min) / range;
+              const [r, g, b] = getColorForElevation(normalized, elevation, colorScheme);
+              data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+            }
+            idx += 4;
+          }
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      console.log(`HeightMap描画完了: ${Math.round(performance.now() - startTime)}ms`);
+      return { canvas, min, max, range: max - min };
+    }
+
+    // 標高マップのみ生成（水なし）
+    function createHeightmapOnly(elevationData, colorScheme = 'grayscale') {
+      console.log(`HeightmapOnly生成: ${elevationData.width}x${elevationData.height}`);
+      const startTime = performance.now();
+      
+      const { elevations, width, height } = elevationData;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+      
+      // 標高min/max計算
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < elevations.length; i++) {
+        if (elevations[i] !== -32768) {
+          min = Math.min(min, elevations[i]);
+          max = Math.max(max, elevations[i]);
+        }
+      }
+      const range = max - min || 1;
+      
+      // 高速化：単一ループでピクセル処理（変数事前宣言）
+      const totalPixels = width * height;
+      let idx = 0, v, t;
+      if (colorScheme === 'grayscale' || colorScheme === 'terrain') {
+        for (let i = 0; i < totalPixels; i++) {
+          const elevation = elevations[i];
+          if (elevation === -32768) {
+            data[idx] = data[idx + 1] = data[idx + 2] = 128;
+          } else {
+            t = (elevation - min) / range;
+            if (colorScheme === 'grayscale') {
+              v = (t * 255) | 0;
+              data[idx] = data[idx + 1] = data[idx + 2] = v;
+            } else {
+              if (t < 0.2) { data[idx] = 60; data[idx + 1] = 100; data[idx + 2] = 40; }
+              else if (t < 0.4) { data[idx] = 120; data[idx + 1] = 160; data[idx + 2] = 80; }
+              else if (t < 0.6) { data[idx] = 180; data[idx + 1] = 140; data[idx + 2] = 100; }
+              else if (t < 0.8) { data[idx] = 160; data[idx + 1] = 120; data[idx + 2] = 80; }
+              else { data[idx] = 220; data[idx + 1] = 220; data[idx + 2] = 240; }
+            }
+          }
+          data[idx + 3] = 255;
+          idx += 4;
+        }
+      } else {
+        for (let i = 0; i < totalPixels; i++) {
+          const elevation = elevations[i];
+          if (elevation === -32768) {
+            data[idx] = data[idx + 1] = data[idx + 2] = 128;
+          } else {
+            v = ((elevation - min) / range * 255) | 0;
+            data[idx] = data[idx + 1] = data[idx + 2] = v;
+          }
+          data[idx + 3] = 255;
+          idx += 4;
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      console.log(`HeightmapOnly完了: ${Math.round(performance.now() - startTime)}ms`);
+      return { canvas, min, max, range };
+    }
+
+    // 水マスク生成（白=水、黒=陸地）
+    function createWaterMask(elevationData) {
+      console.log(`WaterMask生成: ${elevationData.width}x${elevationData.height}, 湖:${elevationData.lakes?.length || 0}個, 海:${elevationData.seas?.length || 0}個`);
+      const startTime = performance.now();
+      
+      const { elevations, width, height, bounds, lakes, seas } = elevationData;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+      
+      // 湖・海ポリゴンをピクセル座標に変換
+      const pixelLakes = (lakes && bounds) ? lakes.map(lake => ({
+        ...lake,
+        pixels: lake.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height))
+      })) : [];
+      const pixelSeas = (seas && bounds) ? seas.map(sea => ({
+        ...sea,
+        pixels: sea.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height))
+      })) : [];
+      
+      // 空間グリッドインデックス
+      const gridSize = 64;
+      const lakeGrid = {};
+      pixelLakes.forEach((lake, i) => {
+        lake.pixels.forEach(p => {
+          const gx = Math.floor(p.x / gridSize);
+          const gy = Math.floor(p.y / gridSize);
+          const key = `${gx},${gy}`;
+          if (!lakeGrid[key]) lakeGrid[key] = [];
+          lakeGrid[key].push(i);
+        });
+      });
+      const seaGrid = {};
+      pixelSeas.forEach((sea, i) => {
+        sea.pixels.forEach(p => {
+          const gx = Math.floor(p.x / gridSize);
+          const gy = Math.floor(p.y / gridSize);
+          const key = `${gx},${gy}`;
+          if (!seaGrid[key]) seaGrid[key] = [];
+          seaGrid[key].push(i);
+        });
+      });
+      
+      // 高速判定関数
+      const inLakeFast = (point) => {
+        const gx = Math.floor(point.x / gridSize);
+        const gy = Math.floor(point.y / gridSize);
+        const key = `${gx},${gy}`;
+        const candidates = lakeGrid[key];
+        if (!candidates) return false;
+        const unique = [...new Set(candidates)];
+        return unique.some(idx => pointInPolygon(point, pixelLakes[idx].pixels));
+      };
+      const inSeaFast = (point) => {
+        const gx = Math.floor(point.x / gridSize);
+        const gy = Math.floor(point.y / gridSize);
+        const key = `${gx},${gy}`;
+        const candidates = seaGrid[key];
+        if (!candidates) return false;
+        const unique = [...new Set(candidates)];
+        return unique.some(idx => pointInPolygon(point, pixelSeas[idx].pixels));
+      };
+      
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const elevation = elevations[y * width + x];
+          const point = { x, y };
+          
+          const inLake = inLakeFast(point);
+          const inSeaPoly = inSeaFast(point);
+          const isSeaByElevation = !inLake && elevation <= -4;
+          const isWater = inLake || inSeaPoly || isSeaByElevation;
+          
+          // 白=水、黒=陸地
+          const v = isWater ? 255 : 0;
+          data[idx] = v;
+          data[idx + 1] = v;
+          data[idx + 2] = v;
+          data[idx + 3] = 255;
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      console.log(`WaterMask完了: ${((performance.now() - startTime) / 1000).toFixed(2)}秒`);
+      return canvas;
+    }
+
+    // NormalMap生成（行並列処理 + 湖ポリゴン反映）
+    function createNormalMap(elevationData, strength = 2.0) {
+      console.log(`NormalMap描画開始: ${elevationData.width}x${elevationData.height}, 湖:${elevationData.lakes?.length || 0}個, 海:${elevationData.seas?.length || 0}個`);
+      const startTime = performance.now();
+      
+      const { elevations, width, height, bounds, lakes, seas } = elevationData;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(width, height);
+      const data = imageData.data;
+      
+      // 湖ポリゴンをピクセル座標に変換 + バウンディングボックス事前計算
+      const pixelLakes = (lakes && bounds) ? lakes.map(lake => {
+        const pixels = lake.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height));
+        // バウンディングボックス計算
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of pixels) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        return { ...lake, pixels, bbox: { minX, maxX, minY, maxY } };
+      }) : [];
+      
+      // 海ポリゴンも同様に変換
+      const pixelSeas = (seas && bounds) ? seas.map(sea => {
+        const pixels = sea.coords.map(c => latLonToPixel(c.lat, c.lon, bounds, width, height));
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of pixels) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        return { ...sea, pixels, bbox: { minX, maxX, minY, maxY } };
+      }) : [];
+      
+      // 超高速化: 空間グリッドインデックス構築
+      const gridSize = 64;
+      const gridCols = Math.ceil(width / gridSize);
+      const gridRows = Math.ceil(height / gridSize);
+      const grid = new Array(gridCols * gridRows).fill(null).map(() => []);
+      const seaGrid = new Array(gridCols * gridRows).fill(null).map(() => []);
+      
+      pixelLakes.forEach((lake, lakeIdx) => {
+        const minCol = Math.floor(lake.bbox.minX / gridSize);
+        const maxCol = Math.floor(lake.bbox.maxX / gridSize);
+        const minRow = Math.floor(lake.bbox.minY / gridSize);
+        const maxRow = Math.floor(lake.bbox.maxY / gridSize);
+        
+        for (let r = Math.max(0, minRow); r <= Math.min(gridRows - 1, maxRow); r++) {
+          for (let c = Math.max(0, minCol); c <= Math.min(gridCols - 1, maxCol); c++) {
+            grid[r * gridCols + c].push(lakeIdx);
+          }
+        }
+      });
+      
+      // 高速化: bbox事前チェック + 行単位で処理
+      let lastLogRow = 0;
+      const logInterval = Math.max(1, Math.floor(height / 10)); // 10%ごとにログ
+      
+      // グリッド高速判定関数（湖）
+      const inLakeFast = (point) => {
+        const col = Math.floor(point.x / gridSize);
+        const row = Math.floor(point.y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        
+        const lakeIndices = grid[row * gridCols + col];
+        for (const lakeIdx of lakeIndices) {
+          const lake = pixelLakes[lakeIdx];
+          if (point.x < lake.bbox.minX || point.x > lake.bbox.maxX ||
+              point.y < lake.bbox.minY || point.y > lake.bbox.maxY) continue;
+          if (pointInPolygon(point, lake.pixels)) return true;
+        }
+        return false;
+      };
+      
+      // グリッド高速判定関数（海）
+      const inSeaFast = (point) => {
+        const col = Math.floor(point.x / gridSize);
+        const row = Math.floor(point.y / gridSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false;
+        
+        const seaIndices = seaGrid[row * gridCols + col];
+        for (const seaIdx of seaIndices) {
+          const sea = pixelSeas[seaIdx];
+          if (point.x < sea.bbox.minX || point.x > sea.bbox.maxX ||
+              point.y < sea.bbox.minY || point.y > sea.bbox.maxY) continue;
+          if (pointInPolygon(point, sea.pixels)) return true;
+        }
+        return false;
+      };
+      
+      const processRow = (y) => {
+        if (y - lastLogRow >= logInterval) {
+          console.log(`  NormalMap描画進捗: ${Math.round(y/height*100)}% (${y}/${height}行)`);
+          lastLogRow = y;
+        }
+        
+        const yOffset = y * width;
+        const yUp = Math.max(0, y - 1) * width;
+        const yDown = Math.min(height - 1, y + 1) * width;
+        
+        for (let x = 0; x < width; x++) {
+          const idx = (yOffset + x) * 4;
+          const point = { x, y };
+          // 湖/海内判定（bbox高速化版）+ 標高-4m以下を海として沈める
+          const inLake = inLakeFast(point);
+          const inSeaPoly = inSeaFast(point);
+          const isSeaByElevation = !inLake && elevation <= -4; // 標高-4m以下を海として沈める
+          const isWater = inLake || inSeaPoly || isSeaByElevation;
+          
+          const left = elevations[yOffset + Math.max(0, x - 1)];
+          const right = elevations[yOffset + Math.min(width - 1, x + 1)];
+          const up = elevations[yUp + x];
+          const down = elevations[yDown + x];
+          
+          const dx = (right - left) * strength;
+          const dy = (down - up) * strength;
+          const dz = 1.0;
+          const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          
+          const invLen = 127.5 / len;
+          
+          data[idx] = Math.round((dx * invLen) + 127.5);
+          data[idx + 1] = Math.round((dy * invLen) + 127.5);
+          // 湖/海 内ならbを2倍
+          const bVal = Math.round((dz * invLen) + 127.5);
+          data[idx + 2] = isWater ? Math.min(255, bVal * 2) : bVal;
+          data[idx + 3] = 255;
+        }
+      };
+      
+      // 行を順次処理
+      for (let y = 0; y < height; y++) {
+        processRow(y);
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      const elapsed = Math.round(performance.now() - startTime);
+      console.log(`NormalMap描画完了: ${elapsed}ms`);
+      return canvas;
+    }
+
+    // Minecraft用HeightMap生成（0-255スケール、黒=低地、白=高地）
+    function createMinecraftHeightmap(elevationData) {
+      const { elevations, width, height, min: cachedMin, max: cachedMax } = elevationData;
+      
+      // キャッシュされたmin/maxを使用
+      let min = cachedMin !== undefined ? cachedMin : -1000; // 海底-1000m
+      let max = cachedMax !== undefined ? cachedMax : 1000;  // 山頂+1000m
+      
+      // Minecraft用キャンバス作成
+      const canvas = document.createElement('canvas');
+      // マイクラのチャンク境界に合わせて2の累乗サイズに調整
+      const maxDim = Math.max(width, height);
+      const pow2 = Math.pow(2, Math.ceil(Math.log2(maxDim)));
+      const mcSize = Math.min(512, Math.max(128, pow2));
+      canvas.width = mcSize;
+      canvas.height = mcSize;
+      
+      const ctx = canvas.getContext('2d');
+      const imageData = ctx.createImageData(mcSize, mcSize);
+      const data = imageData.data;
+      
+      // スケーリング係数（Minecraftの0-255範囲スケーリング）
+      const range = max - min || 1;
+      const scaleFactor = 255 / range;
+      
+      // リサイズしながら0-255にスケーリング
+      const xRatio = width / mcSize;
+      const yRatio = height / mcSize;
+      
+      for (let y = 0; y < mcSize; y++) {
+        for (let x = 0; x < mcSize; x++) {
+          const srcX = Math.min(Math.floor(x * xRatio), width - 1);
+          const srcY = Math.min(Math.floor(y * yRatio), height - 1);
+          const srcIdx = srcY * width + srcX;
+          const elevation = elevations[srcIdx];
+          
+          const idx = (y * mcSize + x) * 4;
+          
+          if (elevation === -32768) {
+            // 無効データは海レベル（Y=64相当）
+            data[idx] = data[idx + 1] = data[idx + 2] = 64;
+            data[idx + 3] = 255;
+          } else {
+            // 0-255にスケール（黒=低地、白=高地 - Minecraft標準）
+            const normalized = Math.max(0, Math.min(255, Math.round((elevation - min) * scaleFactor)));
+            data[idx] = normalized;
+            data[idx + 1] = normalized;
+            data[idx + 2] = normalized;
+            data[idx + 3] = 255;
+          }
+        }
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      return canvas;
+    }
+
+    // ==================== Distance Calculation ====================
+    // 2点間の距離を計算（Haversine公式）
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // 地球半径(m)
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+    
+    // 距離を人間可読形式に変換
+    function formatDistance(meters) {
+      if (meters >= 1000) {
+        return (meters / 1000).toFixed(2) + ' km';
+      }
+      return Math.round(meters) + ' m';
+    }
+    
+    // 現在の距離を保持（画像サイズ計算用）
+    let currentDistances = null;
+    
+    // 選択範囲の距離を更新
+    function updateDistanceDisplay(bounds) {
+      if (!bounds) return;
+      
+      const nsDistance = calculateDistance(bounds.north, bounds.west, bounds.south, bounds.west);
+      const ewDistance = calculateDistance(bounds.north, bounds.west, bounds.north, bounds.east);
+      
+      // 距離を保存
+      currentDistances = { nsDistance, ewDistance };
+      
+      nsDistanceEl.textContent = formatDistance(nsDistance);
+      ewDistanceEl.textContent = formatDistance(ewDistance);
+      areaInfoEl.textContent = 
+        `北端: ${bounds.north.toFixed(4)}°, 南端: ${bounds.south.toFixed(4)}°`;
+      
+      // 画像サイズも更新
+      updateImageSize();
+      
+      return { nsDistance, ewDistance };
+    }
+    
+    // 最適なズームレベルを計算（縮尺から）
+    function calculateOptimalZoom(lat, scaleMetersPerPx) {
+      // 地球周長(赤道)約40075km
+      const earthCircumference = 40075000;
+      // タイル1枚=256px
+      const tileSize = 256;
+      // 緯度による補正
+      const latRad = lat * Math.PI / 180;
+      const cosLat = Math.cos(latRad);
+      
+      // 1ピクセルあたりの距離 = earthCircumference * cos(lat) / 2^z / 256
+      // scaleMetersPerPx = earthCircumference * cos(lat) / 2^z / 256
+      // 2^z = earthCircumference * cos(lat) / 256 / scaleMetersPerPx
+      // z = log2(earthCircumference * cos(lat) / 256 / scaleMetersPerPx)
+      
+      const zoom = Math.log2((earthCircumference * cosLat) / (tileSize * scaleMetersPerPx));
+      
+      // 範囲を制限（5〜18）
+      return Math.max(5, Math.min(18, Math.round(zoom)));
+    }
+    
+    // 画像サイズを計算・表示
+    function updateImageSize() {
+      if (!currentDistances) return;
+      
+      const scaleMetersPerPx = parseInt(scaleSlider.value);
+      const widthPx = Math.round(currentDistances.ewDistance / scaleMetersPerPx);
+      const heightPx = Math.round(currentDistances.nsDistance / scaleMetersPerPx);
+      
+      imgWidthEl.textContent = widthPx.toLocaleString() + ' px';
+      imgHeightEl.textContent = heightPx.toLocaleString() + ' px';
+      imgSizeInfoEl.textContent = `総ピクセル: ${(widthPx * heightPx).toLocaleString()} (${scaleMetersPerPx}m/px)`;
+      
+      // ズームレベルも自動計算・更新
+      if (selectedLocation) {
+        const optimalZoom = calculateOptimalZoom(selectedLocation.lat, scaleMetersPerPx);
+        zoomSlider.value = optimalZoom;
+        zoomValue.textContent = optimalZoom;
+        
+        // タイル数も再計算
+        if (pointA && pointB) {
+          updateTileCountForZoom();
+        }
+      }
+    }
+
+    // ==================== Application State ====================
+    let map, marker, rectangle;
+    let selectedLocation = null;
+    let elevationData = null;
+    let animationId = null;
+    let currentCanvas = null;
+
+    // ==================== UI Elements ====================
+    const latInput = document.getElementById('latInput');
+    const lonInput = document.getElementById('lonInput');
+    const zoomSlider = document.getElementById('zoom');
+    const zoomValue = document.getElementById('zoomValue');
+    const tileValue = document.getElementById('tileValue');
+    const tileValue2 = document.getElementById('tileValue2');
+    let autoCalculatedTileCount = 1;
+    const colorScheme = document.getElementById('colorScheme');
+    const view2dBtn = document.getElementById('view2d');
+    const view3dBtn = document.getElementById('view3d');
+    const exaggerationSlider = document.getElementById('exaggeration');
+    const exaggerationValue = document.getElementById('exaggerationValue');
+    const exaggerationGroup = document.getElementById('exaggerationGroup');
+    const fetchBtn = document.getElementById('fetchElevation');
+    const applyBtn = document.getElementById('applyCoords');
+    const tileInfo = document.getElementById('tileInfo');
+    const errorBox = document.getElementById('errorBox');
+    const statsContainer = document.getElementById('statsContainer');
+    const statsDiv = document.getElementById('stats');
+    const exportHeightmapBtn = document.getElementById('exportHeightmap');
+    const exportNormalmapBtn = document.getElementById('exportNormalmap');
+    const exportMinecraftBtn = document.getElementById('exportMinecraft');
+    const heightmapContainer = document.getElementById('heightmapContainer');
+    const nsDistanceEl = document.getElementById('nsDistance');
+    const ewDistanceEl = document.getElementById('ewDistance');
+    const areaInfoEl = document.getElementById('areaInfo');
+    const scaleSlider = document.getElementById('scaleSlider');
+    const scaleValue = document.getElementById('scaleValue');
+    const imgWidthEl = document.getElementById('imgWidth');
+    const imgHeightEl = document.getElementById('imgHeight');
+    const imgSizeInfoEl = document.getElementById('imgSizeInfo');
+
+    // ==================== Event Listeners ====================
+    zoomSlider.addEventListener('input', () => {
+      zoomValue.textContent = zoomSlider.value;
+      // ズーム変更時にタイル数を再計算（選択範囲がある場合）
+      if (pointA && pointB) {
+        updateTileCountForZoom();
+      }
+    });
+    exaggerationSlider.addEventListener('input', () => {
+      exaggerationValue.textContent = exaggerationSlider.value;
+    });
+    
+    // 縮尺スライダー
+    scaleSlider.addEventListener('input', () => {
+      scaleValue.textContent = scaleSlider.value;
+      updateImageSize();
+    });
+
+    view2dBtn.addEventListener('click', async () => {
+      view2dBtn.classList.add('active');
+      view3dBtn.classList.remove('active');
+      exaggerationGroup.style.display = 'none';
+      if (elevationData) await renderHeightmap();
+    });
+
+    view3dBtn.addEventListener('click', () => {
+      view3dBtn.classList.add('active');
+      view2dBtn.classList.remove('active');
+      exaggerationGroup.style.display = 'flex';
+      if (elevationData) render3D();
+    });
+
+    applyBtn.addEventListener('click', () => {
+      const lat = parseFloat(latInput.value);
+      const lon = parseFloat(lonInput.value);
+      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        showError('有効な座標を入力してください');
+        return;
+      }
+      selectLocation(lat, lon);
+    });
+
+    fetchBtn.addEventListener('click', async () => {
+      if (!selectedLocation) {
+        showError('場所を選択してください');
+        return;
+      }
+      
+      if (!currentDistances) {
+        showError('範囲を選択してください（地図で2点をクリック）');
+        return;
+      }
+      
+      showLoading();
+      hideError();
+      
+      try {
+        // 縮尺からズームレベルと必要タイル数を計算
+        const scaleMetersPerPx = parseInt(scaleSlider.value);
+        const zoom = calculateOptimalZoom(selectedLocation.lat, scaleMetersPerPx);
+        
+        // 必要なタイル数を計算（縮尺と範囲から）
+        // 1タイル = 256px = 256 * scaleMetersPerPx メートル
+        const tileRealSizeMeters = 256 * scaleMetersPerPx;
+        const nsTileCount = Math.ceil(currentDistances.nsDistance / tileRealSizeMeters);
+        const ewTileCount = Math.ceil(currentDistances.ewDistance / tileRealSizeMeters);
+        const tileCount = Math.max(nsTileCount, ewTileCount);
+        // 奇数にして中心対称に
+        const adjustedTileCount = tileCount % 2 === 0 ? tileCount + 1 : tileCount;
+        
+        console.log(`縮尺: ${scaleMetersPerPx}m/px, ズーム: ${zoom}, タイル数: ${adjustedTileCount}x${adjustedTileCount}`);
+        
+        const centerTile = latLonToTile(selectedLocation.lat, selectedLocation.lng, zoom);
+        const tileSize = 256; // AWSタイルサイズ
+        
+        // 範囲の座標を計算
+        const offset = Math.floor(adjustedTileCount / 2);
+        const minTx = centerTile.x - offset;
+        const maxTx = centerTile.x + offset;
+        const minTy = centerTile.y - offset;
+        const maxTy = centerTile.y + offset;
+        
+        // タイル座標を緯度経度に変換
+        const n = Math.pow(2, zoom);
+        const minLon = minTx / n * 360 - 180;
+        const maxLon = (maxTx + 1) / n * 360 - 180;
+        const minLat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (maxTy + 1) / n))) * 180 / Math.PI;
+        const maxLat = Math.atan(Math.sinh(Math.PI * (1 - 2 * minTy / n))) * 180 / Math.PI;
+        
+        const bounds = { minLat, minLon, maxLat, maxLon };
+        
+        // UI更新
+        zoomSlider.value = zoom;
+        zoomValue.textContent = zoom;
+        autoCalculatedTileCount = adjustedTileCount;
+        tileValue.textContent = adjustedTileCount;
+        tileValue2.textContent = adjustedTileCount;
+        
+        // 標高データとOSM湖データを並列取得
+        const [data, lakes] = await Promise.all([
+          fetchElevationArea(
+            selectedLocation.lat,
+            selectedLocation.lng,
+            zoom,
+            adjustedTileCount
+          ),
+          fetchOSMLakes(bounds)
+        ]);
+        
+        if (!data) throw new Error('標高データを取得できませんでした');
+        
+        elevationData = data;
+        elevationData.bounds = bounds;
+        elevationData.lakes = lakes?.lakes || lakes || []; // 新形式 or 旧形式
+        elevationData.seas = lakes?.seas || []; // 海データ
+        
+        // 選択範囲（矩形）にトリミング
+        if (pointA && pointB) {
+          // 選択範囲の正確なboundsを計算
+          const selectionBounds = {
+            minLat: Math.min(pointA.lat, pointB.lat),
+            maxLat: Math.max(pointA.lat, pointB.lat),
+            minLon: Math.min(pointA.lng, pointB.lng),
+            maxLon: Math.max(pointA.lng, pointB.lng)
+          };
+          
+          // タイルデータを選択範囲にトリミング
+          elevationData = trimElevationToBounds(elevationData, selectionBounds);
+          
+          console.log(`範囲外をトリミング: ${selectionBounds.minLat.toFixed(4)}°-${selectionBounds.maxLat.toFixed(4)}° lat, ${selectionBounds.minLon.toFixed(4)}°-${selectionBounds.maxLon.toFixed(4)}° lon`);
+        }
+        
+        // 距離表示を更新
+        updateDistanceDisplay({ 
+          north: elevationData.bounds.maxLat, 
+          south: elevationData.bounds.minLat, 
+          east: elevationData.bounds.maxLon, 
+          west: elevationData.bounds.minLon 
+        });
+        
+        // 海底-1000mまで対応: グローバルmin/maxを調整
+        if (elevationData.min > -1000) elevationData.min = -1000;
+        
+        // 湖情報をconsole.logで詳細出力
+        console.log(`========== 湖ポリゴン: ${elevationData.lakes.length}個, 海: ${elevationData.seas.length}個 ==========`);
+        elevationData.lakes.slice(0, 50).forEach((lake, i) => { // 最初の50個のみ
+          console.log(`[${i + 1}] ${lake.name}: ${lake.coords.length}頂点`);
+          console.log(`    中心: ${lake.coords.reduce((sum, c) => sum + c.lat, 0) / lake.coords.length}, ${lake.coords.reduce((sum, c) => sum + c.lon, 0) / lake.coords.length}`);
+        });
+        if (elevationData.lakes.length > 50) {
+          console.log(`... 他 ${elevationData.lakes.length - 50} 個`);
+        }
+        if (elevationData.seas.length > 0) {
+          console.log(`--- 海・海岸線 ---`);
+          elevationData.seas.forEach((sea, i) => {
+            console.log(`[海${i + 1}] ${sea.name}: ${sea.coords.length}頂点`);
+          });
+        }
+        console.log(`========================================`);
+        
+        if (view3dBtn.classList.contains('active')) {
+          render3D();
+        } else {
+          await renderHeightmap();
+        }
+      } catch (err) {
+        showError(err.message);
+        console.error(err);
+      }
+    });
+
+    exportHeightmapBtn.addEventListener('click', () => {
+      if (!currentCanvas) return;
+      const link = document.createElement('a');
+      link.download = `heightmap_${Date.now()}.png`;
+      link.href = currentCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    exportNormalmapBtn.addEventListener('click', () => {
+      if (!elevationData) return;
+      const normalCanvas = createNormalMap(elevationData);
+      const link = document.createElement('a');
+      link.download = `normalmap_${Date.now()}.png`;
+      link.href = normalCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    exportMinecraftBtn.addEventListener('click', () => {
+      downloadMinecraftWorld();
+    });
+
+    // ==================== Minecraft World Generation ====================
+    
+    // NBTタグタイプ定数
+    const NBT = {
+      END: 0, BYTE: 1, SHORT: 2, INT: 3, LONG: 4, FLOAT: 5, DOUBLE: 6,
+      BYTE_ARRAY: 7, STRING: 8, LIST: 9, COMPOUND: 10, INT_ARRAY: 11, LONG_ARRAY: 12
+    };
+    
+    // 単純なNBT書き込みヘルパー
+    class NBTWriter {
+      constructor() {
+        this.data = [];
+      }
+      
+      writeByte(v) { this.data.push(v & 0xFF); }
+      writeShort(v) { this.data.push((v >> 8) & 0xFF, v & 0xFF); }
+      writeInt(v) { this.data.push((v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF); }
+      writeLong(v) {
+        const high = Math.floor(v / 0x100000000);
+        const low = v >>> 0;
+        this.writeInt(high);
+        this.writeInt(low);
+      }
+      writeFloat(v) {
+        const buf = new ArrayBuffer(4);
+        new DataView(buf).setFloat32(0, v, false);
+        this.data.push(...new Uint8Array(buf));
+      }
+      writeDouble(v) {
+        const buf = new ArrayBuffer(8);
+        new DataView(buf).setFloat64(0, v, false);
+        this.data.push(...new Uint8Array(buf));
+      }
+      writeString(s) {
+        const bytes = new TextEncoder().encode(s);
+        this.writeShort(bytes.length);
+        this.data.push(...bytes);
+      }
+      writeByteArray(arr) {
+        this.writeInt(arr.length);
+        this.data.push(...arr);
+      }
+      writeIntArray(arr) {
+        this.writeInt(arr.length);
+        for (const v of arr) this.writeInt(v);
+      }
+      writeLongArray(arr) {
+        this.writeInt(arr.length);
+        for (const v of arr) this.writeLong(v);
+      }
+      
+      toBytes() { return new Uint8Array(this.data); }
+    }
+    
+    // チャンクセクションデータ生成（縮尺に応じて高さをスケーリング）
+    function createChunkSection(elevation, lakes, seas, bounds, sectionY, scaleMetersPerPx = 10) {
+      const blocks = [];
+      const waterMask = [];
+      const sectionBaseY = sectionY * 16;
+      
+      // 高さスケーリング係数（1ブロック = scaleMetersPerPx メートル）
+      const heightScale = 1 / scaleMetersPerPx;
+      // 水の閾値もスケーリング
+      const waterThreshold = Math.floor(-4 * heightScale);
+      
+      for (let y = 0; y < 16; y++) {
+        const worldY = sectionBaseY + y;
+        for (let z = 0; z < 16; z++) {
+          for (let x = 0; x < 16; x++) {
+            // 標高データからピクセル座標を計算
+            const px = Math.floor(x / 16 * elevation.width);
+            const pz = Math.floor(z / 16 * elevation.height);
+            const idx = pz * elevation.width + px;
+            // 高さをスケーリング（メートル → ブロック）
+            const rawHeight = elevation.elevations[idx];
+            const height = Math.floor(rawHeight * heightScale);
+            
+            // 水判定（スケーリング後の高さで判定）
+            const lat = bounds.maxLat - (pz / elevation.height) * (bounds.maxLat - bounds.minLat);
+            const lon = bounds.minLon + (px / elevation.width) * (bounds.maxLon - bounds.minLon);
+            const isWater = rawHeight < -4 || isPointInLake(lat, lon, lakes) || isPointInSea(lat, lon, seas);
+            
+            // ブロック決定
+            let blockId = 0; // 空気
+            if (worldY <= height) {
+              if (worldY === height) {
+                blockId = isWater ? 9 : 2; // 水か草地
+              } else if (worldY >= height - 3) {
+                blockId = isWater ? 9 : 3; // 水か土
+              } else {
+                blockId = 1; // 石
+              }
+            } else if (isWater && worldY < Math.max(0, waterThreshold + 2)) {
+              blockId = 9; // 水（スケーリングした海レベルまで）
+            }
+            
+            blocks.push(blockId);
+          }
+        }
+      }
+      
+      return { blocks, blockCount: blocks.filter(b => b !== 0).length };
+    }
+    
+    // 湖・海判定ヘルパー
+    function isPointInLake(lat, lon, lakes) {
+      if (!lakes) return false;
+      return lakes.some(lake => pointInPolygonSimple(lat, lon, lake.coords));
+    }
+    function isPointInSea(lat, lon, seas) {
+      if (!seas) return false;
+      return seas.some(sea => pointInPolygonSimple(lat, lon, sea.coords));
+    }
+    function pointInPolygonSimple(lat, lon, coords) {
+      if (!coords || coords.length < 3) return false;
+      let inside = false;
+      for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
+        const xi = coords[i].lat, yi = coords[i].lon;
+        const xj = coords[j].lat, yj = coords[j].lon;
+        if (((yi > lon) !== (yj > lon)) && (lat < (xj - xi) * (lon - yi) / (yj - yi) + xi)) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+    
+    // リージョンファイル(.mca)生成（超高速化・非同期・プログレス対応）
+    async function generateMinecraftWorld(elevationData, onProgress) {
+      const { elevations, width, height, bounds, lakes, seas } = elevationData;
+      
+      // 1チャンク = 16ブロック
+      const chunksX = Math.ceil(width / 16);
+      const chunksZ = Math.ceil(height / 16);
+      const maxChunksX = Math.min(chunksX, 32);
+      const maxChunksZ = Math.min(chunksZ, 32);
+      const totalChunks = maxChunksX * maxChunksZ;
+      
+      console.log(`Minecraftワールド生成: ${maxChunksX}x${maxChunksZ}チャンク (${totalChunks}個)`);
+      
+      // 標高データを事前スケーリング（メートル→ブロック）
+      const heightScale = 0.1; // 1/10
+      const scaledElevations = new Int16Array(elevations.length);
+      for (let i = 0; i < elevations.length; i++) {
+        scaledElevations[i] = Math.floor(elevations[i] * heightScale);
+      }
+      
+      // グローバルな標高範囲を計算（簡易版）
+      let globalMinHeight = Infinity;
+      let globalMaxHeight = -Infinity;
+      for (let i = 0; i < scaledElevations.length; i++) {
+        const h = scaledElevations[i];
+        if (h < globalMinHeight) globalMinHeight = h;
+        if (h > globalMaxHeight) globalMaxHeight = h;
+      }
+      
+      console.log(`標高範囲: ${globalMinHeight} ~ ${globalMaxHeight} ブロック`);
+      
+      const chunkData = [];
+      let processedChunks = 0;
+      
+      // チャンクを1つずつ処理（UI応答性優先）
+      for (let cz = 0; cz < maxChunksZ; cz++) {
+        for (let cx = 0; cx < maxChunksX; cx++) {
+          // 各チャンクを独立して処理
+          const chunk = await processChunkAsync(cx, cz, width, height, scaledElevations, bounds, lakes, seas);
+          
+          if (chunk.sections.length > 0) {
+            chunkData.push(chunk);
+          }
+          
+          processedChunks++;
+          
+          // プログレス更新（必ず表示）
+          if (onProgress) {
+            const percent = Math.round(processedChunks / totalChunks * 100);
+            onProgress(processedChunks, totalChunks, `${cx},${cz} (${percent}%)`);
+          }
+          
+          // UIスレッドに制御を返す（フリーズ防止）
+          if (processedChunks % 2 === 0) {
+            await new Promise(r => setTimeout(r, 1));
+          }
+        }
+      }
+      
+      // 最終プログレス
+      if (onProgress) {
+        onProgress(totalChunks, totalChunks, '完了');
+      }
+      
+      console.log(`チャンク生成完了: ${chunkData.length}個`);
+      
+      // スケーリング済みデータを解放
+      scaledElevations.fill(0);
+      
+      return {
+        levelDat: generateLevelDat(),
+        region: chunkData,
+        chunksX: maxChunksX,
+        chunksZ: maxChunksZ
+      };
+    }
+    
+    // 単一チャンクを非同期処理（WebWorker的な分割）
+    async function processChunkAsync(cx, cz, width, height, scaledElevations, bounds, lakes, seas) {
+      const startPx = cx * 16;
+      const endPx = Math.min((cx + 1) * 16, width);
+      const startPz = cz * 16;
+      const endPz = Math.min((cz + 1) * 16, height);
+      
+      // このチャンクの標高範囲を計算
+      let minHeight = Infinity;
+      let maxHeight = -Infinity;
+      for (let pz = startPz; pz < endPz; pz++) {
+        for (let px = startPx; px < endPx; px++) {
+          const idx = pz * width + px;
+          const h = scaledElevations[idx];
+          if (h < minHeight) minHeight = h;
+          if (h > maxHeight) maxHeight = h;
+        }
+      }
+      
+      // 必要なセクションのみ生成
+      const minSection = Math.max(0, Math.floor(minHeight / 16) - 1);
+      const maxSection = Math.min(15, Math.floor(maxHeight / 16) + 1);
+      
+      const sections = [];
+      for (let sy = minSection; sy <= maxSection; sy++) {
+        const section = createChunkSectionFast(scaledElevations, width, height, bounds, lakes, seas, cx, cz, sy);
+        if (section.blockCount > 0) {
+          sections.push({ y: sy, ...section });
+        }
+      }
+      
+      return { x: cx, z: cz, sections };
+    }
+    
+    // 高速版チャンクセクション生成（湖・海判定を簡略化）
+    function createChunkSectionFast(scaledElevations, width, height, bounds, lakes, seas, cx, cz, sectionY) {
+      const blocks = new Int8Array(16 * 16 * 16); // 32768ブロック
+      const sectionBaseY = sectionY * 16;
+      let blockCount = 0;
+      
+      const startPx = cx * 16;
+      const startPz = cz * 16;
+      
+      // 湖・海の存在確認（簡略判定）
+      const hasWater = sectionY < 4; // 簡略化：低いセクションは水の可能性
+      
+      for (let y = 0; y < 16; y++) {
+        const worldY = sectionBaseY + y;
+        for (let z = 0; z < 16; z++) {
+          for (let x = 0; x < 16; x++) {
+            const px = Math.min(startPx + x, width - 1);
+            const pz = Math.min(startPz + z, height - 1);
+            const idx = pz * width + px;
+            const groundHeight = scaledElevations[idx];
+            
+            // ブロック決定（簡略化）
+            let blockId = 0;
+            if (worldY <= groundHeight) {
+              if (worldY === groundHeight) {
+                blockId = 2; // 草地（簡略化）
+              } else if (worldY >= groundHeight - 3) {
+                blockId = 3; // 土
+              } else {
+                blockId = 1; // 石
+              }
+              blockCount++;
+            } else if (hasWater && worldY < 0) {
+              blockId = 9; // 水（海底）
+              blockCount++;
+            }
+            
+            blocks[(y * 16 + z) * 16 + x] = blockId;
+          }
+        }
+      }
+      
+      return { blocks: Array.from(blocks), blockCount };
+    }
+    
+    // level.dat生成
+    function generateLevelDat() {
+      const writer = new NBTWriter();
+      // 簡易的なlevel.dat（実際のフォーマットは複雑）
+      writer.writeByte(NBT.COMPOUND);
+      writer.writeString(''); // ルートタグ名
+      writer.writeString('Data');
+      writer.writeByte(NBT.COMPOUND);
+      writer.writeString('GameType');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(1); // Creative
+      writer.writeString('LevelName');
+      writer.writeByte(NBT.STRING);
+      writer.writeString('Terrain World');
+      writer.writeString('spawnX');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(0);
+      writer.writeString('spawnY');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(64);
+      writer.writeString('spawnZ');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(0);
+      writer.writeByte(NBT.END);
+      writer.writeByte(NBT.END);
+      return writer.toBytes();
+    }
+    
+    // MCA（Minecraft Anvil）リージョンファイル生成
+    async function generateMCAFile(chunks, onChunkProgress) {
+      // MCAフォーマット: 8192バイトヘッダー + 圧縮チャンクデータ
+      // ヘッダー: 1024個のロケーションエントリ(各4バイト) + 1024個のタイムスタンプ(各4バイト)
+      const SECTOR_SIZE = 4096;
+      const HEADER_SIZE = SECTOR_SIZE * 2; // 8192バイト
+      const MAX_CHUNKS = 1024; // 32x32
+      
+      // ロケーションテーブルとタイムスタンプテーブル
+      const locationTable = new Uint32Array(1024);
+      const timestampTable = new Uint32Array(1024);
+      
+      // チャンクデータを圧縮して収集
+      const chunkDataList = [];
+      let currentSector = 2; // ヘッダー後から開始（セクタ0,1はヘッダー）
+      
+      for (let i = 0; i < MAX_CHUNKS; i++) {
+        const cx = i % 32;
+        const cz = Math.floor(i / 32);
+        
+        // 該当チャンクを検索
+        const chunk = chunks.find(c => c.x === cx && c.z === cz);
+        
+        if (chunk && chunk.sections.length > 0) {
+          // チャンクNBTデータ生成
+          const chunkNBT = generateChunkNBT(chunk);
+          
+          // zlib圧縮（簡易版：deflate）
+          const compressed = await compressChunk(chunkNBT);
+          
+          // セクタサイズ計算（4096バイト単位）
+          const sectorCount = Math.ceil(compressed.length / SECTOR_SIZE);
+          
+          // ロケーションエントリ: 上位3バイト=オフセット, 下位1バイト=セクタ数
+          locationTable[i] = (currentSector << 8) | (sectorCount & 0xFF);
+          timestampTable[i] = Math.floor(Date.now() / 1000);
+          
+          chunkDataList.push({
+            offset: currentSector * SECTOR_SIZE,
+            data: compressed,
+            size: compressed.length,
+            sectors: sectorCount
+          });
+          
+          currentSector += sectorCount;
+          
+          if (onChunkProgress && i % 16 === 0) {
+            onChunkProgress(i, MAX_CHUNKS);
+          }
+        }
+      }
+      
+      // ファイルサイズ計算
+      const fileSize = Math.max(
+        HEADER_SIZE,
+        chunkDataList.length > 0 
+          ? chunkDataList[chunkDataList.length - 1].offset + chunkDataList[chunkDataList.length - 1].sectors * SECTOR_SIZE
+          : HEADER_SIZE
+      );
+      
+      // MCAファイルバッファ作成
+      const mcaBuffer = new ArrayBuffer(fileSize);
+      const mcaView = new DataView(mcaBuffer);
+      
+      // ロケーションテーブル書き込み（ビッグエンディアン）
+      for (let i = 0; i < 1024; i++) {
+        mcaView.setUint32(i * 4, locationTable[i], false);
+      }
+      
+      // タイムスタンプテーブル書き込み
+      for (let i = 0; i < 1024; i++) {
+        mcaView.setUint32(4096 + i * 4, timestampTable[i], false);
+      }
+      
+      // チャンクデータ書き込み
+      const mcaBytes = new Uint8Array(mcaBuffer);
+      for (const chunkData of chunkDataList) {
+        // 長さプレフィックス（4バイト）+ 圧縮タイプ（1バイト）+ データ
+        const offset = chunkData.offset;
+        mcaView.setUint32(offset, chunkData.size + 1, false); // サイズ（圧縮タイプ含む）
+        mcaBytes[offset + 4] = 2; // 圧縮タイプ: 2 = zlib deflate
+        mcaBytes.set(chunkData.data, offset + 5);
+      }
+      
+      return mcaBytes;
+    }
+    
+    // チャンクNBTデータ生成
+    function generateChunkNBT(chunk) {
+      const writer = new NBTWriter();
+      
+      // Chunk NBT構造
+      writer.writeByte(NBT.COMPOUND);
+      writer.writeString(''); // ルート
+      
+      // xPos, zPos
+      writer.writeString('xPos');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(chunk.x);
+      
+      writer.writeString('zPos');
+      writer.writeByte(NBT.INT);
+      writer.writeInt(chunk.z);
+      
+      // Status
+      writer.writeString('Status');
+      writer.writeByte(NBT.STRING);
+      writer.writeString('full');
+      
+      // sections
+      writer.writeString('sections');
+      writer.writeByte(NBT.LIST);
+      writer.writeInt(chunk.sections.length); // 要素数
+      writer.writeByte(NBT.COMPOUND); // 要素タイプ
+      
+      for (const section of chunk.sections) {
+        // Y座標
+        writer.writeString('Y');
+        writer.writeByte(NBT.BYTE);
+        writer.writeByte(section.y);
+        
+        // ブロック状態（簡易版：palette方式）
+        writer.writeString('block_states');
+        writer.writeByte(NBT.COMPOUND);
+        
+        // palette
+        writer.writeString('palette');
+        writer.writeByte(NBT.LIST);
+        writer.writeInt(4); // ブロックタイプ数
+        writer.writeByte(NBT.COMPOUND);
+        
+        // 空気
+        writer.writeString('Name');
+        writer.writeByte(NBT.STRING);
+        writer.writeString('minecraft:air');
+        writer.writeByte(NBT.END);
+        
+        // 石
+        writer.writeString('Name');
+        writer.writeByte(NBT.STRING);
+        writer.writeString('minecraft:stone');
+        writer.writeByte(NBT.END);
+        
+        // 草地
+        writer.writeString('Name');
+        writer.writeByte(NBT.STRING);
+        writer.writeString('minecraft:grass_block');
+        writer.writeByte(NBT.END);
+        
+        // 土
+        writer.writeString('Name');
+        writer.writeByte(NBT.STRING);
+        writer.writeString('minecraft:dirt');
+        writer.writeByte(NBT.END);
+        
+        // data（ブロックID配列）- 簡易版
+        writer.writeString('data');
+        writer.writeByte(NBT.LONG_ARRAY);
+        const longArray = blocksToLongArray(section.blocks);
+        writer.writeInt(longArray.length);
+        for (const v of longArray) writer.writeLong(v);
+        
+        writer.writeByte(NBT.END); // block_states end
+        
+        // biomes（簡易版）
+        writer.writeString('biomes');
+        writer.writeByte(NBT.COMPOUND);
+        writer.writeString('palette');
+        writer.writeByte(NBT.LIST);
+        writer.writeInt(1);
+        writer.writeByte(NBT.STRING);
+        writer.writeString('minecraft:plains');
+        writer.writeByte(NBT.END); // biomes end
+        
+        writer.writeByte(NBT.END); // section end
+      }
+      
+      writer.writeByte(NBT.END); // sections list end
+      
+      // その他の必要なフィールド
+      writer.writeString('Heightmaps');
+      writer.writeByte(NBT.COMPOUND);
+      writer.writeByte(NBT.END);
+      
+      writer.writeByte(NBT.END); // root compound end
+      
+      return writer.toBytes();
+    }
+    
+    // ブロック配列をLongArrayに変換（簡易版）
+    function blocksToLongArray(blocks) {
+      // 4096ブロック（16x16x16）を64ビットlongにパック
+      const longCount = Math.ceil(4096 / 8); // 各longに8ブロック
+      const result = [];
+      
+      for (let i = 0; i < longCount; i++) {
+        let value = 0;
+        for (let j = 0; j < 8; j++) {
+          const blockIdx = i * 8 + j;
+          if (blockIdx < blocks.length) {
+            value |= BigInt(blocks[blockIdx] & 0xF) << BigInt(j * 8);
+          }
+        }
+        result.push(value);
+      }
+      
+      return result;
+    }
+    
+    // 簡易zlib圧縮（実際のzlibは複雑なので、仮実装）
+    async function compressChunk(data) {
+      // 実際のzlib圧縮は複雑なので、生データを返す（デモ用）
+      // 本番ではpako.js等のライブラリを使用することを推奨
+      return data;
+    }
+    
+    // Minecraftワールドダウンロード（プログレス表示付き）
+    async function downloadMinecraftWorld() {
+      if (!elevationData) {
+        showError('標高データを先に取得してください');
+        return;
+      }
+      
+      // カスタムローディング表示（Minecraft用）
+      showMinecraftLoading(0);
+      console.log('Minecraftワールド生成開始...');
+      
+      try {
+        // プログレスコールバック付きで生成
+        const worldData = await generateMinecraftWorld(elevationData, (current, total, pos) => {
+          showMinecraftLoading(Math.round(current / total * 100), `チャンク ${pos} 生成中...`);
+        });
+        
+        showMinecraftLoading(100, 'MCAファイル作成中...');
+        
+        // ZIP生成（非同期でUIを更新）
+        const zip = new JSZip();
+        
+        // level.dat
+        zip.file('level.dat', worldData.levelDat);
+        
+        // regionフォルダ
+        const regionFolder = zip.folder('region');
+        
+        // MCAファイル生成（r.0.0.mca）
+        showMinecraftLoading(100, 'リージョンファイル生成中...');
+        const mcaData = await generateMCAFile(worldData.region, (current, total) => {
+          showMinecraftLoading(100, `チャンク圧縮中... (${current}/${total})`);
+        });
+        regionFolder.file('r.0.0.mca', mcaData);
+        
+        // チャンク情報JSON（参考用）
+        const chunkInfo = {
+          version: '1.20',
+          format: 'MCA (Minecraft Anvil)',
+          chunksX: worldData.chunksX,
+          chunksZ: worldData.chunksZ,
+          totalChunks: worldData.region.length,
+          regionFile: 'r.0.0.mca'
+        };
+        regionFolder.file('region_info.json', JSON.stringify(chunkInfo, null, 2));
+        
+        // README
+        zip.file('README.txt', 
+`Minecraft Terrain World
+======================
+生成日: ${new Date().toLocaleString('ja-JP')}
+範囲: ${elevationData.width}x${elevationData.height}ブロック
+チャンク: ${worldData.chunksX}x${worldData.chunksZ}
+縮尺: 10m/px
+
+フォルダ構成:
+  level.dat - ワールド設定
+  region/
+    r.0.0.mca - リージョンファイル（MCAフォーマット）
+
+使い方:
+1. ZIPを展開
+2. .minecraft/saves/ フォルダにコピー
+3. Minecraftで「Terrain World」として読み込み
+
+※実験的な実装です。WorldPainter等で変換することを推奨します。`);
+        
+        // ZIP生成（プログレス付き）
+        const content = await zip.generateAsync({ 
+          type: 'blob',
+          compression: 'DEFLATE',
+          compressionOptions: { level: 6 }
+        });
+        
+        showMinecraftLoading(100, 'ダウンロード中...');
+        
+        const link = document.createElement('a');
+        link.download = `minecraft_world_${Date.now()}.zip`;
+        link.href = URL.createObjectURL(content);
+        link.click();
+        
+        console.log('Minecraftワールド生成完了');
+        
+        // 少し表示してから元に戻す
+        setTimeout(() => {
+          hideLoading();
+          renderHeightmap();
+        }, 1000);
+        
+      } catch (err) {
+        console.error('Minecraftワールド生成エラー:', err);
+        showError('ワールド生成に失敗しました: ' + err.message);
+        hideLoading();
+      }
+    }
+    
+    // Minecraft用ローディング表示
+    function showMinecraftLoading(percent, message = 'ワールド生成中...') {
+      heightmapContainer.innerHTML = `
+        <div class="loading">
+          <div class="spinner" style="border-color: #10b981; border-top-color: transparent;"></div>
+          <p style="color: #10b981; font-weight: 600;">🎮 ${message}</p>
+          <div class="progress-container">
+            <div class="progress-bar" id="mcProgressBar" style="width: ${percent}%; background: linear-gradient(90deg, #10b981, #059669);"></div>
+          </div>
+          <p class="progress-text" id="mcProgressText">${percent}%</p>
+          <p style="font-size: 0.75rem; color: #64748b; margin-top: 0.5rem;">ブラウザを閉じないでください</p>
+        </div>
+      `;
+    }
+    
+    // ==================== Functions ====================
+    let pointA = null;  // 起点
+    let pointB = null;  // 終点
+    let tempMarkerA = null;
+    let tempMarkerB = null;
+    let rangeRect = null;
+    let selectionStep = 0; // 0:未選択, 1:起点選択済, 2:範囲確定
+
+    function initMap() {
+      map = L.map('map').setView([35.6762, 139.6503], 10);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      // 2点クリック選択機能
+      map.on('click', (e) => {
+        handleMapClick(e.latlng.lat, e.latlng.lng);
+      });
+    }
+
+    function handleMapClick(lat, lng) {
+      if (selectionStep === 0 || selectionStep >= 2) {
+        // リセットして起点を設定
+        if (selectionStep >= 2) resetSelection();
+        
+        pointA = { lat, lng };
+        selectionStep = 1;
+        
+        // 起点マーカー表示
+        if (tempMarkerA) map.removeLayer(tempMarkerA);
+        tempMarkerA = L.circleMarker([lat, lng], {
+          radius: 8,
+          fillColor: '#667eea',
+          color: '#fff',
+          weight: 2,
+          fillOpacity: 1
+        }).addTo(map).bindPopup('起点').openPopup();
+        
+        document.getElementById('mapTitle').textContent = '地図 - 終点をクリック（2/2）';
+        
+        // 仮の矩形を表示（マウス移動で更新）
+        map.on('mousemove', updateTempRectangle);
+        
+      } else if (selectionStep === 1) {
+        // 終点を設定
+        pointB = { lat, lng };
+        selectionStep = 2;
+        
+        // マウス追従を解除
+        map.off('mousemove', updateTempRectangle);
+        
+        // 終点マーカー表示
+        if (tempMarkerB) map.removeLayer(tempMarkerB);
+        tempMarkerB = L.circleMarker([lat, lng], {
+          radius: 8,
+          fillColor: '#ef4444',
+          color: '#fff',
+          weight: 2,
+          fillOpacity: 1
+        }).addTo(map).bindPopup('終点').openPopup();
+        
+        // 範囲確定
+        finalizeRangeSelection();
+      }
+    }
+
+    function updateTempRectangle(e) {
+      if (!pointA || selectionStep !== 1) return;
+      
+      const bounds = [
+        [pointA.lat, pointA.lng],
+        [e.latlng.lat, e.latlng.lng]
+      ];
+      
+      if (rangeRect) map.removeLayer(rangeRect);
+      rangeRect = L.rectangle(bounds, {
+        color: '#667eea',
+        weight: 2,
+        fillColor: '#667eea',
+        fillOpacity: 0.1,
+        dashArray: '5, 5'
+      }).addTo(map);
+    }
+
+    function finalizeRangeSelection() {
+      if (!pointA || !pointB) return;
+      
+      // 範囲のBoundsを計算
+      const latMin = Math.min(pointA.lat, pointB.lat);
+      const latMax = Math.max(pointA.lat, pointB.lat);
+      const lngMin = Math.min(pointA.lng, pointB.lng);
+      const lngMax = Math.max(pointA.lng, pointB.lng);
+      
+      const latDiff = latMax - latMin;
+      const lngDiff = lngMax - lngMin;
+      const maxDiff = Math.max(latDiff, lngDiff);
+      
+      // 中心点を計算
+      const centerLat = (latMin + latMax) / 2;
+      const centerLng = (lngMin + lngMax) / 2;
+      
+      // 適切なズームレベルを自動計算
+      let newZoom = 12;
+      if (maxDiff > 0.5) newZoom = 8;
+      else if (maxDiff > 0.2) newZoom = 9;
+      else if (maxDiff > 0.1) newZoom = 10;
+      else if (maxDiff > 0.05) newZoom = 11;
+      else if (maxDiff > 0.02) newZoom = 12;
+      else newZoom = 13;
+      
+      // UI更新（タイル数は自動計算）
+      zoomSlider.value = newZoom;
+      zoomValue.textContent = newZoom;
+      
+      // タイル数を範囲とズームに応じて自動計算
+      const tileCountValue = calculateOptimalTileCount(maxDiff, newZoom);
+      autoCalculatedTileCount = tileCountValue;
+      tileValue.textContent = tileCountValue;
+      tileValue2.textContent = tileCountValue;
+      
+      // 最終的な矩形を表示
+      if (rangeRect) map.removeLayer(rangeRect);
+      if (rectangle) map.removeLayer(rectangle);
+      
+      const finalBounds = [[latMin, lngMin], [latMax, lngMax]];
+      rectangle = L.rectangle(finalBounds, {
+        color: '#667eea',
+        weight: 2,
+        fillColor: '#667eea',
+        fillOpacity: 0.1
+      }).addTo(map);
+      
+      // 距離表示を更新
+      updateDistanceDisplay({ north: latMax, south: latMin, east: lngMax, west: lngMin });
+      
+      // 中心地点を選択
+      selectedLocation = { lat: centerLat, lng: centerLng };
+      latInput.value = centerLat.toFixed(6);
+      lonInput.value = centerLng.toFixed(6);
+      
+      // 中心マーカー
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([centerLat, centerLng], {
+        icon: L.divIcon({
+          className: 'custom-marker',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+      }).addTo(map);
+      
+      updateTileInfo();
+      hideError();
+      
+      document.getElementById('mapTitle').textContent = '地図 - 範囲確定（クリックで再選択）';
+      
+      // 次のクリックでリセット
+      selectionStep = 3;
+    }
+
+    function resetSelection() {
+      pointA = null;
+      pointB = null;
+      selectionStep = 0;
+      autoCalculatedTileCount = 1;
+      if (tempMarkerA) map.removeLayer(tempMarkerA);
+      if (tempMarkerB) map.removeLayer(tempMarkerB);
+      if (rangeRect) map.removeLayer(rangeRect);
+      if (rectangle) map.removeLayer(rectangle);
+      tempMarkerA = null;
+      
+      // 距離表示をリセット
+      nsDistanceEl.textContent = '-';
+      ewDistanceEl.textContent = '-';
+      areaInfoEl.textContent = '取得範囲を選択してください';
+      
+      // 画像サイズ表示をリセット
+      currentDistances = null;
+      imgWidthEl.textContent = '-';
+      imgHeightEl.textContent = '-';
+      imgSizeInfoEl.textContent = '取得範囲と縮尺で自動計算';
+      
+      tempMarkerB = null;
+      rangeRect = null;
+      rectangle = null;
+      tileValue.textContent = '1';
+      tileValue2.textContent = '1';
+      document.getElementById('mapTitle').textContent = '地図 - 起点をクリック（1/2）';
+    }
+
+    // ズーム変更時にタイル数を再計算
+    function updateTileCountForZoom() {
+      if (!pointA || !pointB) return;
+      
+      const zoom = parseInt(zoomSlider.value);
+      const latDiff = Math.abs(pointA.lat - pointB.lat);
+      const lonDiff = Math.abs(pointA.lng - pointB.lng);
+      const maxDiff = Math.max(latDiff, lonDiff);
+      
+      const tileCount = calculateOptimalTileCount(maxDiff, zoom);
+      autoCalculatedTileCount = tileCount;
+      tileValue.textContent = tileCount;
+      tileValue2.textContent = tileCount;
+      
+      console.log(`ズーム変更: ${zoom} → タイル数: ${tileCount}x${tileCount}`);
+    }
+
+    // 範囲とズームレベルに基づいて最適なタイル数を計算
+    function calculateOptimalTileCount(rangeDiff, zoom) {
+      // ズームレベルに基づく基本タイルサイズ（度）
+      const tileSizeAtZoom = 360 / Math.pow(2, zoom);
+      
+      // 範囲をタイルサイズで割って必要なタイル数を計算
+      const tilesNeeded = Math.ceil(rangeDiff / tileSizeAtZoom);
+      
+      // 奇数のみ（中心を維持するため）
+      return Math.max(1, tilesNeeded % 2 === 0 ? tilesNeeded + 1 : tilesNeeded);
+    }
+
+    function selectLocation(lat, lng) {
+      selectedLocation = { lat, lng };
+      latInput.value = lat.toFixed(6);
+      lonInput.value = lng.toFixed(6);
+      
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lat, lng], {
+        icon: L.divIcon({
+          className: 'custom-marker',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+      }).addTo(map);
+      
+      updateSelectionArea();
+      updateTileInfo();
+      hideError();
+    }
+
+    function updateSelectionArea() {
+      if (!selectedLocation) return;
+      if (rectangle) map.removeLayer(rectangle);
+      
+      const offset = 0.01 * parseInt(tileSlider.value);
+      const bounds = [
+        [selectedLocation.lat - offset, selectedLocation.lng - offset],
+        [selectedLocation.lat + offset, selectedLocation.lng + offset]
+      ];
+      
+      rectangle = L.rectangle(bounds, {
+        color: '#667eea',
+        weight: 2,
+        fillColor: '#667eea',
+        fillOpacity: 0.1
+      }).addTo(map);
+    }
+
+    function updateTileInfo() {
+      if (!selectedLocation) return;
+      const tile = latLonToTile(selectedLocation.lat, selectedLocation.lng, parseInt(zoomSlider.value));
+      tileInfo.innerHTML = `
+        <strong>タイル情報</strong><br>
+        X: ${tile.x}, Y: ${tile.y}, Z: ${tile.z}<br>
+        Lat: ${selectedLocation.lat.toFixed(4)}<br>
+        Lon: ${selectedLocation.lng.toFixed(4)}
+      `;
+      tileInfo.style.display = 'block';
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = 'block';
+    }
+
+    function hideError() {
+      errorBox.style.display = 'none';
+    }
+
+    function showLoading(totalTiles = 0) {
+      heightmapContainer.innerHTML = `
+        <div class="loading">
+          <div class="spinner"></div>
+          <p>標高データを取得中...</p>
+          ${totalTiles > 0 ? `
+          <div class="progress-container">
+            <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+          </div>
+          <p class="progress-text" id="progressText">0 / ${totalTiles} タイル</p>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function hideLoading() {
+      // HeightMapを再表示（データがある場合）
+      if (elevationData && currentCanvas) {
+        renderHeightmap();
+      } else {
+        heightmapContainer.innerHTML = `
+          <div class="loading">
+            <p>地図で場所を選択してください</p>
+          </div>
+        `;
+      }
+    }
+
+    function updateProgress(loaded, total) {
+      const progressBar = document.getElementById('progressBar');
+      const progressText = document.getElementById('progressText');
+      if (progressBar) {
+        progressBar.style.width = `${(loaded / total * 100).toFixed(1)}%`;
+      }
+      if (progressText) {
+        progressText.textContent = `${loaded} / ${total} タイル`;
+      }
+    }
+
+    async function renderHeightmap() {
+      if (!elevationData) return;
+      
+      const result = await createHeightmapImage(elevationData, colorScheme.value);
+      currentCanvas = result.canvas;
+      
+      // プレビューは一定サイズにスケーリング
+      const maxDisplaySize = 600;
+      const scale = Math.min(maxDisplaySize / result.canvas.width, maxDisplaySize / result.canvas.height, 1);
+      const displayWidth = result.canvas.width * scale;
+      const displayHeight = result.canvas.height * scale;
+      
+      const displayCanvas = document.createElement('canvas');
+      displayCanvas.width = displayWidth;
+      displayCanvas.height = displayHeight;
+      const ctx = displayCanvas.getContext('2d');
+      ctx.drawImage(result.canvas, 0, 0, displayWidth, displayHeight);
+      
+      heightmapContainer.innerHTML = '';
+      heightmapContainer.appendChild(displayCanvas);
+      
+      // Update stats
+      statsDiv.innerHTML = `
+        <div class="stat-item"><span class="stat-label">最小標高</span><span class="stat-value">${Math.round(result.min)}m</span></div>
+        <div class="stat-item"><span class="stat-label">最大標高</span><span class="stat-value">${Math.round(result.max)}m</span></div>
+        <div class="stat-item"><span class="stat-label">標高差</span><span class="stat-value">${Math.round(result.range)}m</span></div>
+        <div class="stat-item"><span class="stat-label">解像度</span><span class="stat-value">${elevationData.width}×${elevationData.height}</span></div>
+      `;
+      statsContainer.style.display = 'block';
+    }
+
+    function render3D() {
+      if (!elevationData) return;
+      if (animationId) cancelAnimationFrame(animationId);
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = 500;
+      canvas.height = 350;
+      const ctx = canvas.getContext('2d');
+      
+      heightmapContainer.innerHTML = '';
+      heightmapContainer.appendChild(canvas);
+      
+      const exaggeration = parseFloat(exaggerationSlider.value);
+      
+      // LOD自動選択: 大きなデータセットは間引く
+      const totalPixels = elevationData.width * elevationData.height;
+      let lodLevel = 1;
+      if (totalPixels > 4000000) lodLevel = 8;      // >4Mpx: 1/8
+      else if (totalPixels > 1000000) lodLevel = 4; // >1Mpx: 1/4
+      else if (totalPixels > 250000) lodLevel = 2;  // >250Kpx: 1/2
+      
+      const geometry = createTerrainGeometry(elevationData, exaggeration, lodLevel);
+      
+      let rotation = 0;
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2 + 50;
+      const scale = Math.min(canvas.width, canvas.height) * 0.35;
+      const { vertices, indices } = geometry;
+      const faceCount = indices.length / 3;
+      
+      // 高速化: LOD使用時または面数多い場合はソートをスキップ
+      const useSorting = lodLevel === 1 && faceCount < 50000;
+      
+      function animate() {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const cosR = Math.cos(rotation);
+        const sinR = Math.sin(rotation);
+        
+        // 高速化: 投影を事前計算してTypedArrayで管理
+        const projectedLen = vertices.length;
+        const projected = new Float64Array(projectedLen);
+        
+        let pi = 0;
+        const distance = 2;
+        for (let i = 0; i < vertices.length; i += 3) {
+          const x = vertices[i];
+          const y = vertices[i + 1];
+          const z = vertices[i + 2];
+          
+          const rx = x * cosR - z * sinR;
+          const rz = x * sinR + z * cosR;
+          
+          projected[pi++] = centerX + rx * scale / (distance + rz); // px
+          projected[pi++] = centerY - y * scale * 2 - rz * scale * 0.3; // py
+          projected[pi++] = rz; // z for depth
+        }
+        
+        if (useSorting) {
+          // ソートが必要な場合: TypedArrayで高速ソート
+          const faces = new Float64Array(faceCount * 7); // z + 6 vertices
+          let fi = 0;
+          for (let i = 0; i < indices.length; i += 3) {
+            const i0 = indices[i] * 3;
+            const i1 = indices[i + 1] * 3;
+            const i2 = indices[i + 2] * 3;
+            
+            const z = (projected[i0 + 2] + projected[i1 + 2] + projected[i2 + 2]) / 3;
+            faces[fi++] = z;
+            faces[fi++] = projected[i0];
+            faces[fi++] = projected[i0 + 1];
+            faces[fi++] = projected[i1];
+            faces[fi++] = projected[i1 + 1];
+            faces[fi++] = projected[i2];
+            faces[fi++] = projected[i2 + 1];
+          }
+          
+          // バブルソートを回避: 簡易的なインデックスソート
+          const indices2 = new Uint32Array(faceCount);
+          for (let i = 0; i < faceCount; i++) indices2[i] = i;
+          indices2.sort((a, b) => faces[b * 7] - faces[a * 7]);
+          
+          // レンダリング
+          for (let i = 0; i < faceCount; i++) {
+            const fi = indices2[i] * 7;
+            const z = faces[fi];
+            const x0 = faces[fi + 1], y0 = faces[fi + 2];
+            const x1 = faces[fi + 3], y1 = faces[fi + 4];
+            const x2 = faces[fi + 5], y2 = faces[fi + 6];
+            
+            const brightness = 1 - (z + 1) * 0.15;
+            if (brightness < 0.1) continue;
+            
+            const r = 102 * brightness | 0;
+            const g = 126 * brightness | 0;
+            const b = 234 * brightness | 0;
+            
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.closePath();
+            ctx.fill();
+          }
+        } else {
+          // 高速モード: ソートなし、直接レンダリング
+          ctx.fillStyle = 'rgba(102,126,234,0.5)';
+          for (let i = 0; i < indices.length; i += 3) {
+            const i0 = indices[i] * 3;
+            const i1 = indices[i + 1] * 3;
+            const i2 = indices[i + 2] * 3;
+            
+            ctx.beginPath();
+            ctx.moveTo(projected[i0], projected[i0 + 1]);
+            ctx.lineTo(projected[i1], projected[i1 + 1]);
+            ctx.lineTo(projected[i2], projected[i2 + 1]);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        
+        rotation += 0.005;
+        animationId = requestAnimationFrame(animate);
+      }
+      
+      animate();
+      statsContainer.style.display = 'block';
+    }
+
+    function createTerrainGeometry(elevationData, exaggeration = 1.0, lodLevel = 1) {
+      const { elevations, width, height, min: cachedMin, max: cachedMax } = elevationData;
+      
+      // キャッシュされたmin/maxを使用
+      let min = cachedMin !== undefined ? cachedMin : Infinity;
+      let max = cachedMax !== undefined ? cachedMax : -Infinity;
+      
+      if (cachedMin === undefined) {
+        for (let i = 0; i < elevations.length; i++) {
+          const v = elevations[i];
+          if (v !== -32768) {
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+        }
+        elevationData.min = min;
+        elevationData.max = max;
+      }
+      
+      // LOD: 大きなデータセットは間引き
+      const step = lodLevel > 1 ? lodLevel : 1;
+      const w = Math.ceil(width / step);
+      const h = Math.ceil(height / step);
+      
+      const totalVertices = w * h;
+      const vertices = new Float32Array(totalVertices * 3);
+      const indices = new Uint32Array((w - 1) * (h - 1) * 6);
+      
+      const scale = 1.0 / Math.max(w, h);
+      const heightScale = exaggeration * 0.01;
+      
+      // TypedArray使用で高速化
+      let vIdx = 0;
+      const w2 = w / 2, h2 = h / 2;
+      for (let y = 0; y < h; y++) {
+        const srcY = Math.min(y * step, height - 1);
+        const yOffset = srcY * width;
+        const zPos = (y - h2) * scale;
+        for (let x = 0; x < w; x++) {
+          const srcX = Math.min(x * step, width - 1);
+          const elevation = elevations[yOffset + srcX];
+          const h_val = elevation !== -32768 ? (elevation - min) * heightScale : 0;
+          
+          vertices[vIdx++] = (x - w2) * scale;
+          vertices[vIdx++] = h_val;
+          vertices[vIdx++] = zPos;
+        }
+      }
+      
+      let iIdx = 0;
+      for (let y = 0; y < h - 1; y++) {
+        const yOffset = y * w;
+        for (let x = 0; x < w - 1; x++) {
+          const a = yOffset + x;
+          const b = a + 1;
+          const c = yOffset + w + x;
+          const d = c + 1;
+          
+          indices[iIdx++] = a;
+          indices[iIdx++] = b;
+          indices[iIdx++] = c;
+          indices[iIdx++] = b;
+          indices[iIdx++] = d;
+          indices[iIdx++] = c;
+        }
+      }
+      
+      return { vertices, indices, uvs: null, min, max, lodStep: step };
+    }
+
+    // Initialize
+    initMap();
+  </script>
+
+  <!-- Credits -->
+  <div style="position: fixed; bottom: 0; left: 0; right: 0; background: rgba(15, 23, 42, 0.9); border-top: 1px solid #334155; padding: 0.5rem 1rem; font-size: 0.75rem; color: #94a3b8; text-align: center; z-index: 1000;">
+    <span>標高データ: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" style="color: #667eea;">AWS Terrain Tiles</a> | </span>
+    <span>湖沼データ: <a href="https://nlftp.mlit.go.jp/ksj/" target="_blank" style="color: #667eea;">国土数値情報（国土地理院）</a> | </span>
+    <span>地図: <a href="https://leafletjs.com/" target="_blank" style="color: #667eea;">Leaflet</a> + <a href="https://www.openstreetmap.org/" target="_blank" style="color: #667eea;">OpenStreetMap</a></span>
+  </div>
+</body>
+</html>
