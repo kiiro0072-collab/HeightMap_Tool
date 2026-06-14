@@ -2140,14 +2140,16 @@ out skel qt;`;
               }
             }
           }
-          const isSeaByElevation = !inLake && elevation <= -4;
+          if(elevation <= 0){
+            inLake = true;
+          }
+          const isSeaByElevation = elevation <= -4;
           const isWater = inLake || inSeaPoly || isSeaByElevation;
-          
           if (elevation === -32768) {
             data[idx] = data[idx + 1] = data[idx + 2] = 0; data[idx + 3] = 0;
           } else if (isWater) {
             const v = 255 - ((elevation - min) / range * 255) | 0;
-            data[idx] = v+6; data[idx + 1] = v+6; data[idx + 2] = Math.min(255, v+6); data[idx+3] = 255;
+            data[idx] = v+10; data[idx + 1] = v+10; data[idx + 2] = Math.min(255, v+6); data[idx+3] = 255;
           } else {
             const v = 255 - ((elevation - min) / range * 255) | 0;
             data[idx] = v; data[idx + 1] = v; data[idx + 2] = v; data[idx + 3] = 255;
@@ -2198,7 +2200,7 @@ out skel qt;`;
               data[idx] = 0; data[idx + 1] = 0; data[idx + 2] = 0; data[idx + 3] = 0;
             } else if (isWater) {
               const v = 255 - ((elevation - min) / range * 255) | 0;
-              data[idx] = v+6; data[idx + 1] = v+6; data[idx + 2] = Math.min(255, v+6); data[idx + 3] = 255;
+              data[idx] = v+10; data[idx + 1] = v+10; data[idx + 2] = Math.min(255, v+10); data[idx + 3] = 255;
             } else {
               const normalized = (elevation - min) / range;
               const [r, g, b] = getColorForElevation(normalized, elevation, colorScheme);
@@ -2354,7 +2356,7 @@ out skel qt;`;
           
           const inLake = inLakeFast(point);
           const inSeaPoly = inSeaFast(point);
-          const isSeaByElevation = !inLake && elevation <= -4;
+          const isSeaByElevation = elevation <= -4;
           const isWater = inLake || inSeaPoly || isSeaByElevation;
           
           // 白=水、黒=陸地
